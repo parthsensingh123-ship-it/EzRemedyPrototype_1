@@ -44,6 +44,9 @@ export default function StaffPortal() {
   // Patient Medical Documents & History Drawer Modal (triggered from any Appointment row)
   const [inspectAppt, setInspectAppt] = useState(null);
 
+  // In-App PDF / Image Document Viewer Modal
+  const [previewDoc, setPreviewDoc] = useState(null);
+
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleSubmitting, setRescheduleSubmitting] = useState(false);
@@ -138,6 +141,20 @@ export default function StaffPortal() {
     const t = setTimeout(() => setNotice(''), 3500);
     return () => clearTimeout(t);
   }, [notice]);
+
+  const openPatientDocument = async (rec) => {
+    const rawUrl = rec.file_url;
+    if (!rawUrl) {
+      setError('No file URL attached to this record. Ensure the medical-documents bucket exists in Supabase Storage.');
+      return;
+    }
+    const signedUrl = await recordsApi.getSignedFileUrl(rawUrl);
+    setPreviewDoc({
+      title: rec.diagnosis || rec.file_name || 'Patient Medical Document',
+      fileName: rec.file_name || 'document',
+      url: signedUrl
+    });
+  };
 
   const filteredAppointments = useMemo(() => {
     return appointments.filter((appt) => {
@@ -344,8 +361,9 @@ export default function StaffPortal() {
         </motion.div>
       )}
       {error && (
-        <div role="alert" className="mb-6 border border-status-cancelled text-status-cancelled bg-status-cancelledBg rounded px-4 py-3 text-sm">
-          {error}
+        <div role="alert" className="mb-6 border border-status-cancelled text-status-cancelled bg-status-cancelledBg rounded px-4 py-3 text-sm flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={() => setError('')} className="text-xs underline ml-4">Dismiss</button>
         </div>
       )}
 
@@ -447,7 +465,6 @@ export default function StaffPortal() {
                           onComplete={completeAppointment}
                           onReschedule={openReschedule}
                         />
-                        {/* Quick Clinical, Patient Uploaded Files & Consultation Suite Actions */}
                         {appt.status !== 'cancelled' && (
                           <div className="pb-4 flex flex-wrap items-center gap-2.5">
                             <button
@@ -511,16 +528,15 @@ export default function StaffPortal() {
                   records.map((rec) => (
                     <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-3">
                       <RecordRow record={rec} viewerRole={profile.role} />
-                      {rec.file_url && (
-                        <div className="pb-2">
-                          <a
-                            href={rec.file_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded bg-accent text-paper hover:bg-accent-dark"
+                      {(rec.file_url || rec.record_type === 'patient_upload' || rec.notes?.includes('Uploaded by patient')) && (
+                        <div className="pb-2 flex items-center gap-2.5">
+                          <button
+                            type="button"
+                            onClick={() => openPatientDocument(rec)}
+                            className="btn-primary text-xs py-1 px-3"
                           >
-                            Open Patient Attachment: {rec.file_name || 'Medical Document'} ↗
-                          </a>
+                            View Uploaded Document ({rec.file_name || rec.diagnosis || 'File'})
+                          </button>
                         </div>
                       )}
                     </div>
@@ -635,15 +651,14 @@ export default function StaffPortal() {
                           {rec.record_type === 'patient_upload' ? 'Uploaded by Patient' : 'Clinical Record'}
                         </span>
                       </div>
-                      {rec.file_url && (
-                        <a
-                          href={rec.file_url}
-                          target="_blank"
-                          rel="noreferrer"
+                      {(rec.file_url || rec.record_type === 'patient_upload' || rec.notes?.includes('Uploaded by patient')) && (
+                        <button
+                          type="button"
+                          onClick={() => openPatientDocument(rec)}
                           className="btn-primary text-xs py-1 px-2.5 shrink-0"
                         >
-                          View Document ↗
-                        </a>
+                          View Document
+                        </button>
                       )}
                     </div>
                     {rec.prescription && (
@@ -667,6 +682,38 @@ export default function StaffPortal() {
                 + Write Clinical Note & Rx
               </button>
               <button onClick={() => setInspectAppt(null)} className="btn-secondary text-xs">
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* In-App PDF / Image Document Viewer Modal */}
+      <Modal
+        open={Boolean(previewDoc)}
+        onClose={() => setPreviewDoc(null)}
+        title={previewDoc?.title || 'Patient Medical Document'}
+      >
+        {previewDoc && (
+          <div>
+            <div className="w-full h-96 border border-hairline rounded overflow-hidden bg-paper mb-4">
+              <iframe
+                title={previewDoc.title}
+                src={previewDoc.url}
+                className="w-full h-full border-0"
+              />
+            </div>
+            <div className="flex gap-3">
+              <a
+                href={previewDoc.url}
+                target="_blank"
+                rel="noreferrer"
+                className="btn-primary flex-1 text-center text-xs"
+              >
+                Open Full Screen / Download ↗
+              </a>
+              <button onClick={() => setPreviewDoc(null)} className="btn-secondary text-xs">
                 Close
               </button>
             </div>
