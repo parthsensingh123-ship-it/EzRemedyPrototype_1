@@ -1,4 +1,6 @@
-const express = require('express');
+const chatRoutes = require('./routes/chat');
+const billingRoutes = require('./routes/billing');app.use('/api/chat', chatRoutes);
+app.use('/api/billing', billingRoutes);const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
