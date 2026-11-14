@@ -143,12 +143,12 @@ export default function StaffPortal() {
   }, [notice]);
 
   const openPatientDocument = async (rec) => {
-    const rawUrl = rec.file_url;
-    if (!rawUrl) {
-      setError('No file URL attached to this record. Ensure the medical-documents bucket exists in Supabase Storage.');
+    const patientId = rec.patient_id || rec.patient?.id;
+    const signedUrl = await recordsApi.getSignedFileUrl(rec.file_url, patientId);
+    if (!signedUrl) {
+      setError('No file found inside this patient’s storage folder yet.');
       return;
     }
-    const signedUrl = await recordsApi.getSignedFileUrl(rawUrl);
     setPreviewDoc({
       title: rec.diagnosis || rec.file_name || 'Patient Medical Document',
       fileName: rec.file_name || 'document',
@@ -527,7 +527,7 @@ export default function StaffPortal() {
                 ) : (
                   records.map((rec) => (
                     <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-3">
-                      <RecordRow record={rec} viewerRole={profile.role} />
+                      <RecordRow key={rec.id} record={rec} viewerRole={profile.role} />
                       {(rec.file_url || rec.record_type === 'patient_upload' || rec.notes?.includes('Uploaded by patient')) && (
                         <div className="pb-2 flex items-center gap-2.5">
                           <button
@@ -620,7 +620,7 @@ export default function StaffPortal() {
         </>
       )}
 
-      {/* Inspect Patient's Uploaded Documents & Medical Records Modal (Triggered from Appointments Queue) */}
+      {/* Inspect Patient's Uploaded Documents & Medical Records Modal */}
       <Modal
         open={Boolean(inspectAppt)}
         onClose={() => setInspectAppt(null)}
@@ -651,15 +651,13 @@ export default function StaffPortal() {
                           {rec.record_type === 'patient_upload' ? 'Uploaded by Patient' : 'Clinical Record'}
                         </span>
                       </div>
-                      {(rec.file_url || rec.record_type === 'patient_upload' || rec.notes?.includes('Uploaded by patient')) && (
-                        <button
-                          type="button"
-                          onClick={() => openPatientDocument(rec)}
-                          className="btn-primary text-xs py-1 px-2.5 shrink-0"
-                        >
-                          View Document
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => openPatientDocument(rec)}
+                        className="btn-primary text-xs py-1 px-2.5 shrink-0"
+                      >
+                        View Document
+                      </button>
                     </div>
                     {rec.prescription && (
                       <p className="text-ink mt-1.5 bg-panel p-2 rounded">Rx: {rec.prescription}</p>
