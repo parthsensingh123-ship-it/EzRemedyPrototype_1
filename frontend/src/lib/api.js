@@ -391,5 +391,106 @@ export const adminApi = {
       }
     )
 };
+export const chatApi = {
+  list: (appointmentId) =>
+    withFallback(
+      () => api.get(`/chat/${appointmentId}`).then((r) => r.data.messages),
+      async () => {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*, sender:profiles!messages_sender_id_fkey(id, full_name, role)')
+          .eq('appointment_id', appointmentId)
+          .order('created_at', { ascending: true });
+        if (error) throw error;
+        return data || [];
+      }
+    ),
 
+  send: (appointmentId, content, receiverId) =>
+    withFallback(
+      () => api.post(`/chat/${appointmentId}`, { content }).then((r) => r.data.message),
+      async () => {
+        const { data: sessionData } = await supabase.auth.getSession();
+        const uid = sessionData?.session?.user?.id;
+        const { data, error } = await supabase
+          .from('messages')
+          .insert({
+            appointment_id: appointmentId,
+            sender_id: uid,
+            receiver_id: receiverId,
+            content: content.trim()
+          })
+          .select('*, sender:profiles!messages_sender_id_fkey(id, full_name, role)')
+          .single();
+        if (error) throw error;
+        return data;
+      }
+    )
+};
+
+export const billingApi = {
+  list: () =>
+    withFallback(
+      () => api.get('/billing').then((r) => r.data.invoices),
+      async () => {
+        const { data, error } = await supabase
+          .from('invoices')
+          .select(`
+            *,
+            appointment:appointment_id ( id, appointment_date, status, consultation_type ),
+            patient:patient_id ( id, full_name, phone ),
+            doctor:doctor_id ( id, full_name, specialization )
+          `)
+          .order('issued_at', { ascending: false });
+        if (error) throw error;
+        return data || [];
+      }
+    ),
+
+  getByAppointment: (appointment) =>
+    withFallback(
+      () => api.get(`/billing/appointment/${appointment.id}`).then((r) => r.data.invoice),
+      async () => {
+        const { data: existing } = await supabase
+          .from('invoices')
+          .select(`
+            *,
+            patient:patient_id ( id, full_name, phone ),
+            doctor:doctor_id ( id, full_name, specialization )
+          `)
+          .eq('appointment_id', appointment.id)
+          .maybeSingle();
+
+        if (existing) return existing;
+
+        const consultFee = Number(appointment.doctor?.consultation_fee || 500);
+        const platformFee = 49.0;
+        const taxAmount = Number(((consultFee + platformFee) * 0.05).toFixed(2));
+        const totalAmount = Number((consultFee + platformFee + taxAmount).toFixed(2));
+
+        const { data: created, error } = await supabase
+          .from('invoices')
+          .insert({
+            appointment_id: appointment.id,
+            patient_id: appointment.patient_id || appointment.patient?.id,
+            doctor_id: appointment.doctor_id || appointment.doctor?.id,
+            consultation_fee: consultFee,
+            platform_fee: platformFee,
+            tax_amount: taxAmount,
+            total_amount: totalAmount,
+            payment_method: 'UPI',
+            payment_status: 'paid'
+          })
+          .select(`
+            *,
+            patient:patient_id ( id, full_name, phone ),
+            doctor:doctor_id ( id, full_name, specialization )
+          `)
+          .single();
+
+        if (error) throw error;
+        return created;
+      }
+    )
+};
 export default api;
