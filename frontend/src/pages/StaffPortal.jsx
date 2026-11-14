@@ -1,3 +1,5 @@
+
+
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
@@ -8,6 +10,7 @@ import RecordRow from '../components/RecordRow';
 import StatCard from '../components/StatCard';
 import Modal from '../components/Modal';
 import Spinner from '../components/Spinner';
+import ConsultationSuiteModal from '../components/ConsultationSuiteModal';
 
 export default function StaffPortal() {
   const { profile, refreshProfile } = useAuth();
@@ -36,6 +39,9 @@ export default function StaffPortal() {
   // Queue filters
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Consultation Suite Modal (Live Chat, Video Call & Billing Receipt)
+  const [suiteModal, setSuiteModal] = useState({ appointment: null, tab: 'chat' });
 
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
   const [rescheduleDate, setRescheduleDate] = useState('');
@@ -276,7 +282,8 @@ export default function StaffPortal() {
         specialization: docSettings.specialization,
         phone: docSettings.phone,
         bio: docSettings.bio,
-        years_experience: Number(docSettings.years_experience) || 5
+        years_experience: Number(docSettings.years_experience) || 5,
+        consultation_fee: Number(docSettings.consultation_fee) || 500
       });
       await refreshProfile();
       setNotice('Doctor profile updated.');
@@ -427,30 +434,35 @@ export default function StaffPortal() {
                         onComplete={completeAppointment}
                         onReschedule={openReschedule}
                       />
-                      {/* Quick Clinical Actions Bar */}
-                      <div className="pb-3 flex flex-wrap items-center gap-3">
-                        {appt.status !== 'cancelled' && (
+                      {/* Quick Clinical & Consultation Suite Actions Bar */}
+                      {appt.status !== 'cancelled' && (
+                        <div className="pb-4 flex flex-wrap items-center gap-2.5">
                           <button
                             onClick={() => startConsultationRx(appt)}
-                            className="text-xs font-medium text-accent hover:underline"
+                            className="btn-primary text-xs py-1 px-3"
                           >
-                            + Write Clinical Note & E-Prescription for {appt.patient?.full_name || 'Patient'}
+                            + Write Clinical Note & Rx
                           </button>
-                        )}
-                        {(appt.meeting_link || appt.reason?.includes('Video')) && appt.status === 'approved' && (
-                          <a
-                            href={
-                              appt.meeting_link ||
-                              `https://meet.jit.si/EzRemedy-${appt.id.slice(0, 8)}`
-                            }
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-xs font-medium px-2.5 py-1 rounded bg-accent text-paper hover:bg-accent-dark"
+                          <button
+                            onClick={() => setSuiteModal({ appointment: appt, tab: 'chat' })}
+                            className="btn-secondary text-xs py-1 px-2.5"
                           >
-                            Launch Video Room →
-                          </a>
-                        )}
-                      </div>
+                            Chat with {appt.patient?.full_name?.split(' ')[0] || 'Patient'}
+                          </button>
+                          <button
+                            onClick={() => setSuiteModal({ appointment: appt, tab: 'video' })}
+                            className="btn-secondary text-xs py-1 px-2.5"
+                          >
+                            Video Call
+                          </button>
+                          <button
+                            onClick={() => setSuiteModal({ appointment: appt, tab: 'receipt' })}
+                            className="btn-secondary text-xs py-1 px-2.5"
+                          >
+                            Billing Receipt
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -509,14 +521,24 @@ export default function StaffPortal() {
                     />
                   </div>
                 </div>
-                <div className="grid sm:grid-cols-2 gap-4 mb-4">
+                <div className="grid sm:grid-cols-3 gap-4 mb-4">
                   <div>
-                    <label className="field-label">Years of experience</label>
+                    <label className="field-label">Experience (yrs)</label>
                     <input
                       type="number"
                       min="0"
                       value={docSettings.years_experience}
                       onChange={(e) => setDocSettings((s) => ({ ...s, years_experience: e.target.value }))}
+                      className="field-input"
+                    />
+                  </div>
+                  <div>
+                    <label className="field-label">Consult Fee (₹)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={docSettings.consultation_fee}
+                      onChange={(e) => setDocSettings((s) => ({ ...s, consultation_fee: e.target.value }))}
                       className="field-input"
                     />
                   </div>
@@ -684,6 +706,14 @@ export default function StaffPortal() {
           </button>
         </form>
       </Modal>
+
+      {/* Live Chat, Embedded Video Call & GST Billing Receipt Modal */}
+      <ConsultationSuiteModal
+        appointment={suiteModal.appointment}
+        currentUser={profile}
+        initialTab={suiteModal.tab}
+        onClose={() => setSuiteModal({ appointment: null, tab: 'chat' })}
+      />
     </div>
   );
 }
