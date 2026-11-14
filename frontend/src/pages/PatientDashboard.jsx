@@ -1,3 +1,4 @@
+import ConsultationSuiteModal from '../components/ConsultationSuiteModal';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
