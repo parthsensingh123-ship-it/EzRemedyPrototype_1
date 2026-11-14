@@ -2,13 +2,63 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
-import { appointmentsApi, recordsApi, adminApi, profileApi } from '../lib/api';
+import {
+  appointmentsApi,
+  recordsApi,
+  adminApi,
+  profileApi,
+  parseMedicationsFromRecord
+} from '../lib/api';
 import AppointmentRow from '../components/AppointmentRow';
 import RecordRow from '../components/RecordRow';
 import StatCard from '../components/StatCard';
 import Modal from '../components/Modal';
 import Spinner from '../components/Spinner';
 import ConsultationSuiteModal from '../components/ConsultationSuiteModal';
+
+const TIMING_OPTIONS = [
+  'Morning & Night (1-0-1)',
+  'Morning, Afternoon & Night (1-1-1)',
+  'Morning Only (1-0-0)',
+  'Afternoon Only (0-1-0)',
+  'Night / Bedtime Only (0-0-1)',
+  'Morning & Afternoon (1-1-0)',
+  'SOS (When required)'
+];
+
+const FREQUENCY_OPTIONS = [
+  'Twice daily',
+  'Thrice daily',
+  'Once a day',
+  'Every 6 hours',
+  'Weekly once',
+  'As needed (SOS)'
+];
+
+const DURATION_OPTIONS = [
+  '3 days',
+  '5 days',
+  '7 days',
+  '10 days',
+  '14 days',
+  '30 days'
+];
+
+const INSTRUCTION_OPTIONS = [
+  'After meals (With water)',
+  'Before meals (Empty stomach)',
+  'Take with warm water',
+  'Before sleep at night',
+  'Avoid dairy / cold water'
+];
+
+const createEmptyMedRow = () => ({
+  name: '',
+  timing: 'Morning & Night (1-0-1)',
+  frequency: 'Twice daily',
+  duration: '5 days',
+  instructions: 'After meals (With water)'
+});
 
 export default function StaffPortal() {
   const { profile, refreshProfile } = useAuth();
@@ -51,19 +101,20 @@ export default function StaffPortal() {
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleSubmitting, setRescheduleSubmitting] = useState(false);
 
-  // Enhanced Clinical Record & Vitals Modal
+  // Enhanced Clinical Record, Vitals & Structured Medication Builder Modal
   const [showRecordForm, setShowRecordForm] = useState(false);
   const [linkedAppointmentId, setLinkedAppointmentId] = useState(null);
   const [recordForm, setRecordForm] = useState({
     patient_id: '',
     diagnosis: '',
-    prescription: '',
     notes: '',
     blood_pressure: '',
     heart_rate: '',
     temperature: '',
-    weight_kg: ''
+    weight_kg: '',
+    follow_up_date: ''
   });
+  const [medRows, setMedRows] = useState([createEmptyMedRow()]);
   const [recordSubmitting, setRecordSubmitting] = useState(false);
 
   // Doctor Profile Settings
@@ -127,7 +178,7 @@ export default function StaffPortal() {
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'medical_records' }, () => {
         loadAll(true);
-        setNotice('New medical document or record uploaded.');
+        setNotice('New medical document or clinical record synced.');
       })
       .subscribe();
 
@@ -168,7 +219,6 @@ export default function StaffPortal() {
     });
   }, [appointments, statusFilter, searchQuery]);
 
-  // Records belonging to the patient whose appointment the doctor clicked to inspect
   const inspectedPatientRecords = useMemo(() => {
     if (!inspectAppt) return [];
     const targetPatientId = inspectAppt.patient_id || inspectAppt.patient?.id;
@@ -213,14 +263,41 @@ export default function StaffPortal() {
     setRecordForm({
       patient_id: appointment.patient_id || appointment.patient?.id || '',
       diagnosis: '',
-      prescription: '',
       notes: appointment.reason ? `Chief complaint: ${appointment.reason}` : '',
       blood_pressure: '120/80',
       heart_rate: '72',
       temperature: '98.6',
-      weight_kg: ''
+      weight_kg: '',
+      follow_up_date: ''
     });
+    setMedRows([createEmptyMedRow()]);
     setShowRecordForm(true);
+  };
+
+  const addMedRow = () => {
+    setMedRows((prev) => [...prev, createEmptyMedRow()]);
+  };
+
+  const removeMedRow = (idx) => {
+    setMedRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
+  };
+
+  const updateMedRow = (idx, field, value) => {
+    setMedRows((prev) =>
+      prev.map((row, i) => {
+        if (i !== idx) return row;
+        const updated = { ...row, [field]: value };
+        // Auto-sync frequency when timing slot changes
+        if (field === 'timing') {
+          if (value.includes('1-1-1')) updated.frequency = 'Thrice daily';
+          else if (value.includes('1-0-1') || value.includes('1-1-0')) updated.frequency = 'Twice daily';
+          else if (value.includes('1-0-0') || value.includes('0-1-0') || value.includes('0-0-1'))
+            updated.frequency = 'Once a day';
+          else if (value.includes('SOS')) updated.frequency = 'As needed (SOS)';
+        }
+        return updated;
+      })
+    );
   };
 
   const cancelAppointment = async (appointment) => {
@@ -260,17 +337,36 @@ export default function StaffPortal() {
   const submitRecord = async (e) => {
     e.preventDefault();
     setRecordSubmitting(true);
+    setError('');
     try {
+      const validMeds = medRows
+        .map((m) => ({ ...m, name: m.name.trim() }))
+        .filter((m) => m.name.length > 0);
+
+      // Build structured text summary for backwards-compatibility + parser fallback
+      const formattedPrescriptionText =
+        validMeds.length > 0
+          ? validMeds
+              .map(
+                (m, idx) =>
+                  `${idx + 1}. ${m.name} | ${m.timing} | ${m.frequency} | ${m.duration} | ${m.instructions}`
+              )
+              .join('\n')
+          : null;
+
       const payload = {
         patient_id: recordForm.patient_id,
         diagnosis: recordForm.diagnosis,
-        prescription: recordForm.prescription || null,
+        prescription: formattedPrescriptionText,
+        medications: validMeds,
         notes: recordForm.notes || null,
         blood_pressure: recordForm.blood_pressure || undefined,
         heart_rate: recordForm.heart_rate ? Number(recordForm.heart_rate) : undefined,
         temperature: recordForm.temperature ? Number(recordForm.temperature) : undefined,
-        weight_kg: recordForm.weight_kg ? Number(recordForm.weight_kg) : undefined
+        weight_kg: recordForm.weight_kg ? Number(recordForm.weight_kg) : undefined,
+        follow_up_date: recordForm.follow_up_date || undefined
       };
+
       const created = await recordsApi.create(payload);
       setRecords((prev) => [created, ...prev]);
 
@@ -284,14 +380,15 @@ export default function StaffPortal() {
       setRecordForm({
         patient_id: '',
         diagnosis: '',
-        prescription: '',
         notes: '',
         blood_pressure: '',
         heart_rate: '',
         temperature: '',
-        weight_kg: ''
+        weight_kg: '',
+        follow_up_date: ''
       });
-      setNotice('Clinical record & e-prescription saved.');
+      setMedRows([createEmptyMedRow()]);
+      setNotice('Digital e-prescription & medication schedule published to patient portal.');
     } catch (err) {
       setError(err.message || 'Could not save this record.');
     } finally {
@@ -510,37 +607,73 @@ export default function StaffPortal() {
           {activeTab === 'records' && (
             <div>
               <div className="flex items-center justify-between mb-5">
-                <p className="text-sm text-muted">Diagnoses, vitals, patient uploads, and e-prescriptions on file.</p>
+                <p className="text-sm text-muted">Diagnoses, vitals, patient uploads, and structured e-prescriptions on file.</p>
                 <button
                   onClick={() => {
                     setLinkedAppointmentId(null);
+                    setMedRows([createEmptyMedRow()]);
                     setShowRecordForm(true);
                   }}
-                  className="btn-secondary text-sm"
+                  className="btn-primary text-sm"
                 >
-                  Add clinical record
+                  + Write Clinical Note & E-Prescription
                 </button>
               </div>
               <div className="panel px-6">
                 {records.length === 0 ? (
                   <p className="text-sm text-muted py-6">No records yet.</p>
                 ) : (
-                  records.map((rec) => (
-                    <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-3">
-                      <RecordRow key={rec.id} record={rec} viewerRole={profile.role} />
-                      {(rec.file_url || rec.record_type === 'patient_upload' || rec.notes?.includes('Uploaded by patient')) && (
-                        <div className="pb-2 flex items-center gap-2.5">
-                          <button
-                            type="button"
-                            onClick={() => openPatientDocument(rec)}
-                            className="btn-primary text-xs py-1 px-3"
-                          >
-                            View Uploaded Document ({rec.file_name || rec.diagnosis || 'File'})
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))
+                  records.map((rec) => {
+                    const parsedMeds = parseMedicationsFromRecord(rec);
+                    return (
+                      <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-4">
+                        <RecordRow record={rec} viewerRole={profile.role} />
+
+                        {/* Structured Medication Schedule Table on Doctor View */}
+                        {parsedMeds.length > 0 && (
+                          <div className="mt-2 mb-3 bg-paper border border-hairline rounded overflow-hidden">
+                            <div className="px-3 py-1.5 bg-panel border-b border-hairline text-[11px] font-semibold uppercase tracking-wider text-muted">
+                              ℞ Prescribed Medication Schedule ({parsedMeds.length})
+                            </div>
+                            <div className="divide-y divide-hairline">
+                              {parsedMeds.map((m, idx) => (
+                                <div
+                                  key={idx}
+                                  className="px-3 py-2 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-1"
+                                >
+                                  <div>
+                                    <span className="font-semibold text-ink">{m.name}</span>
+                                    <span className="text-muted ml-2">· {m.instructions}</span>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="px-2 py-0.5 rounded bg-panel border border-hairline text-ink font-medium">
+                                      {m.timing}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded bg-status-approvedBg text-status-approved font-medium">
+                                      {m.frequency}
+                                    </span>
+                                    <span className="text-muted font-medium">for {m.duration}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {(rec.file_url || rec.record_type === 'patient_upload' || rec.notes?.includes('Uploaded by patient')) && (
+                          <div className="pb-1 flex items-center gap-2.5">
+                            <button
+                              type="button"
+                              onClick={() => openPatientDocument(rec)}
+                              className="btn-primary text-xs py-1 px-3"
+                            >
+                              View Uploaded Document ({rec.file_name || rec.diagnosis || 'File'})
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -660,7 +793,7 @@ export default function StaffPortal() {
                       </button>
                     </div>
                     {rec.prescription && (
-                      <p className="text-ink mt-1.5 bg-panel p-2 rounded">Rx: {rec.prescription}</p>
+                      <p className="text-ink mt-1.5 bg-panel p-2 rounded whitespace-pre-line">Rx: {rec.prescription}</p>
                     )}
                     {rec.notes && <p className="text-muted mt-1">{rec.notes}</p>}
                   </div>
@@ -743,32 +876,47 @@ export default function StaffPortal() {
         )}
       </Modal>
 
+      {/* Digital Prescription & Medication Schedule Builder Modal */}
       <Modal
         open={showRecordForm}
         onClose={() => setShowRecordForm(false)}
-        title="Add clinical record & e-prescription"
+        title="Digital E-Prescription & Medication Schedule Builder"
       >
-        <form onSubmit={submitRecord}>
-          <div className="mb-4">
-            <label htmlFor="patientSelect" className="field-label">Patient</label>
-            <select
-              id="patientSelect"
-              required
-              value={recordForm.patient_id}
-              onChange={(e) => setRecordForm((f) => ({ ...f, patient_id: e.target.value }))}
-              className="field-input"
-            >
-              <option value="" disabled>
-                Select a patient
-              </option>
-              {patients.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.full_name}
+        <form onSubmit={submitRecord} className="max-h-[78vh] overflow-y-auto pr-1">
+          <div className="grid sm:grid-cols-2 gap-3 mb-4">
+            <div>
+              <label htmlFor="patientSelect" className="field-label">Patient</label>
+              <select
+                id="patientSelect"
+                required
+                value={recordForm.patient_id}
+                onChange={(e) => setRecordForm((f) => ({ ...f, patient_id: e.target.value }))}
+                className="field-input text-xs"
+              >
+                <option value="" disabled>
+                  Select a patient
                 </option>
-              ))}
-            </select>
+                {patients.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.full_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="diagnosis" className="field-label">Primary Diagnosis</label>
+              <input
+                id="diagnosis"
+                required
+                placeholder="e.g. Acute Viral Pharyngitis"
+                value={recordForm.diagnosis}
+                onChange={(e) => setRecordForm((f) => ({ ...f, diagnosis: e.target.value }))}
+                className="field-input text-xs"
+              />
+            </div>
           </div>
 
+          {/* Patient Vitals Row */}
           <div className="grid grid-cols-4 gap-2 mb-4">
             <div>
               <label className="field-label text-xs">BP (mmHg)</label>
@@ -813,44 +961,150 @@ export default function StaffPortal() {
             </div>
           </div>
 
+          {/* Dynamic Multi-Row Medication Schedule Builder */}
           <div className="mb-4">
-            <label htmlFor="diagnosis" className="field-label">Diagnosis</label>
-            <input
-              id="diagnosis"
-              required
-              placeholder="e.g. Acute Viral Pharyngitis"
-              value={recordForm.diagnosis}
-              onChange={(e) => setRecordForm((f) => ({ ...f, diagnosis: e.target.value }))}
-              className="field-input"
-            />
+            <div className="flex items-center justify-between mb-2">
+              <label className="field-label mb-0">℞ Prescribed Medicines & Dosage Schedule</label>
+              <button
+                type="button"
+                onClick={addMedRow}
+                className="text-xs font-semibold text-accent hover:underline"
+              >
+                + Add Another Medicine
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {medRows.map((med, idx) => (
+                <div
+                  key={idx}
+                  className="p-3 rounded border border-hairline bg-paper space-y-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
+                      Medicine #{idx + 1}
+                    </span>
+                    {medRows.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeMedRow(idx)}
+                        className="text-xs text-status-cancelled hover:underline"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+
+                  <div>
+                    <input
+                      type="text"
+                      required={idx === 0}
+                      placeholder="Medicine Name & Strength (e.g. Tab. Paracetamol 650mg, Cap. Amoxicillin 500mg)"
+                      value={med.name}
+                      onChange={(e) => updateMedRow(idx, 'name', e.target.value)}
+                      className="field-input text-xs"
+                    />
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] text-muted mb-1">Dosage / Timing Slot</label>
+                      <select
+                        value={med.timing}
+                        onChange={(e) => updateMedRow(idx, 'timing', e.target.value)}
+                        className="field-input text-xs py-1.5"
+                      >
+                        {TIMING_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-muted mb-1">Frequency</label>
+                      <select
+                        value={med.frequency}
+                        onChange={(e) => updateMedRow(idx, 'frequency', e.target.value)}
+                        className="field-input text-xs py-1.5"
+                      >
+                        {FREQUENCY_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[11px] text-muted mb-1">Duration / Days</label>
+                      <select
+                        value={med.duration}
+                        onChange={(e) => updateMedRow(idx, 'duration', e.target.value)}
+                        className="field-input text-xs py-1.5"
+                      >
+                        {DURATION_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] text-muted mb-1">Meal / Special Instructions</label>
+                      <select
+                        value={med.instructions}
+                        onChange={(e) => updateMedRow(idx, 'instructions', e.target.value)}
+                        className="field-input text-xs py-1.5"
+                      >
+                        {INSTRUCTION_OPTIONS.map((opt) => (
+                          <option key={opt} value={opt}>
+                            {opt}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-          <div className="mb-4">
-            <label htmlFor="prescription" className="field-label">℞ Prescription (Medications, Dosage & Duration)</label>
-            <textarea
-              id="prescription"
-              rows={3}
-              placeholder="1. Tab Paracetamol 650mg — 1-0-1 (After meals) x 3 days&#10;2. Warm saline gargles thrice daily"
-              value={recordForm.prescription}
-              onChange={(e) => setRecordForm((f) => ({ ...f, prescription: e.target.value }))}
-              className="field-input resize-none"
-            />
+
+          <div className="grid sm:grid-cols-3 gap-3 mb-5">
+            <div className="sm:col-span-2">
+              <label htmlFor="recordNotes" className="field-label">Clinical notes & dietary advice</label>
+              <textarea
+                id="recordNotes"
+                rows={2}
+                placeholder="Drink plenty of warm fluids, rest for 48 hours…"
+                value={recordForm.notes}
+                onChange={(e) => setRecordForm((f) => ({ ...f, notes: e.target.value }))}
+                className="field-input resize-none text-xs"
+              />
+            </div>
+            <div>
+              <label htmlFor="followUpDate" className="field-label">Follow-up date</label>
+              <input
+                id="followUpDate"
+                type="date"
+                min={new Date().toISOString().split('T')[0]}
+                value={recordForm.follow_up_date}
+                onChange={(e) => setRecordForm((f) => ({ ...f, follow_up_date: e.target.value }))}
+                className="field-input text-xs"
+              />
+            </div>
           </div>
-          <div className="mb-6">
-            <label htmlFor="recordNotes" className="field-label">Clinical notes & follow-up instructions</label>
-            <textarea
-              id="recordNotes"
-              rows={2}
-              value={recordForm.notes}
-              onChange={(e) => setRecordForm((f) => ({ ...f, notes: e.target.value }))}
-              className="field-input resize-none"
-            />
-          </div>
+
           <button type="submit" disabled={recordSubmitting} className="btn-primary w-full">
             {recordSubmitting
-              ? 'Saving…'
+              ? 'Publishing E-Prescription…'
               : linkedAppointmentId
-              ? 'Save Rx & Mark Appointment Completed'
-              : 'Save clinical record'}
+              ? 'Publish E-Prescription & Complete Appointment'
+              : 'Save Clinical Record & E-Prescription'}
           </button>
         </form>
       </Modal>
