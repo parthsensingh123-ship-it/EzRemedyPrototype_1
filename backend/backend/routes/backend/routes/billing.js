@@ -1,102 +1,103 @@
 const express = require('express');
+const { supabaseAdmin } = require('../config/supabaseClient');
+const { authenticate } = require('../middleware/auth');
+
 const router = express.Router();
-const { requireAuth } = require('../middleware/auth');
 
-router.use(requireAuth);
+router.use(authenticate);
 
-// GET /api/billing - List all invoices for the logged-in patient or doctor
-router.get('/', async (req, res, next) => {
-  try {
-    const { data: invoices, error } = await req.supabase
-      .from('invoices')
-      .select(`
-        *,
-        appointment:appointments(id, appointment_date, status, consultation_type),
-        patient:profiles!invoices_patient_id_fkey(id, full_name, phone),
-        doctor:profiles!invoices_doctor_id_fkey(id, full_name, specialization)
-      `)
-      .order('issued_at', { ascending: false });
+// GET /api/billing - List invoices scoped by user role
+router.get('/', async (req, res) => {
+  let query = supabaseAdmin
+    .from('invoices')
+    .select(`
+      *,
+      appointment:appointment_id ( id, appointment_date, status, consultation_type ),
+      patient:patient_id ( id, full_name, phone ),
+      doctor:doctor_id ( id, full_name, specialization )
+    `)
+    .order('issued_at', { ascending: false });
 
-    if (error) throw error;
-    res.json({ invoices: invoices || [] });
-  } catch (err) {
-    next(err);
+  if (req.user.role === 'patient') {
+    query = query.eq('patient_id', req.user.id);
+  } else if (req.user.role === 'doctor') {
+    query = query.eq('doctor_id', req.user.id);
   }
+
+  const { data, error } = await query;
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  res.json({ invoices: data || [] });
 });
 
-// POST /api/billing/checkout - Process payment & generate itemized receipt for an appointment
-router.post('/checkout', async (req, res, next) => {
-  try {
-    const { appointment_id, payment_method = 'UPI' } = req.body;
+// GET /api/billing/appointment/:appointmentId - Fetch or auto-create receipt for an appointment
+router.get('/appointment/:appointmentId', async (req, res) => {
+  const { appointmentId } = req.params;
 
-    if (!appointment_id) {
-      return res.status(400).json({ error: 'appointment_id is required.' });
-    }
+  const { data: existing } = await supabaseAdmin
+    .from('invoices')
+    .select(`
+      *,
+      appointment:appointment_id ( id, appointment_date, status, consultation_type ),
+      patient:patient_id ( id, full_name, phone ),
+      doctor:doctor_id ( id, full_name, specialization )
+    `)
+    .eq('appointment_id', appointmentId)
+    .maybeSingle();
 
-    // Fetch appointment and doctor's consultation fee
-    const { data: appt, error: apptErr } = await req.supabase
-      .from('appointments')
-      .select(`
-        id,
-        patient_id,
-        doctor_id,
-        doctor:profiles!appointments_doctor_id_fkey(id, full_name, consultation_fee)
-      `)
-      .eq('id', appointment_id)
-      .single();
-
-    if (apptErr || !appt) {
-      return res.status(404).json({ error: 'Appointment not found.' });
-    }
-
-    // Check if an invoice already exists for this appointment
-    const { data: existing } = await req.supabase
-      .from('invoices')
-      .select('*')
-      .eq('appointment_id', appointment_id)
-      .maybeSingle();
-
-    if (existing) {
-      return res.json({ invoice: existing });
-    }
-
-    const consultationFee = Number(appt.doctor?.consultation_fee || 500);
-    const platformFee = 49.0;
-    const taxAmount = Number(((consultationFee + platformFee) * 0.05).toFixed(2));
-    const totalAmount = Number((consultationFee + platformFee + taxAmount).toFixed(2));
-
-    const { data: invoice, error } = await req.supabase
-      .from('invoices')
-      .insert({
-        appointment_id: appt.id,
-        patient_id: appt.patient_id,
-        doctor_id: appt.doctor_id,
-        consultation_fee: consultationFee,
-        platform_fee: platformFee,
-        tax_amount: taxAmount,
-        total_amount: totalAmount,
-        payment_method,
-        payment_status: 'paid'
-      })
-      .select(`
-        *,
-        patient:profiles!invoices_patient_id_fkey(id, full_name, phone),
-        doctor:profiles!invoices_doctor_id_fkey(id, full_name, specialization)
-      `)
-      .single();
-
-    if (error) throw error;
-
-    // Also update appointment payment_status to 'paid'
-    await req.supabase
-      .from('appointments')
-      .update({ payment_status: 'paid' })
-      .eq('id', appt.id);
-
-    res.status(201).json({ invoice });
-  } catch (err) {
-    next(err);
+  if (existing) {
+    return res.json({ invoice: existing });
   }
+
+  // Auto-generate receipt if missing for an older appointment
+  const { data: appt, error: apptErr } = await supabaseAdmin
+    .from('appointments')
+    .select(`
+      id,
+      patient_id,
+      doctor_id,
+      doctor:doctor_id ( id, full_name, consultation_fee )
+    `)
+    .eq('id', appointmentId)
+    .single();
+
+  if (apptErr || !appt) {
+    return res.status(404).json({ error: 'Appointment not found.' });
+  }
+
+  const consultFee = Number(appt.doctor?.consultation_fee || 500);
+  const platformFee = 49.0;
+  const taxAmount = Number(((consultFee + platformFee) * 0.05).toFixed(2));
+  const totalAmount = Number((consultFee + platformFee + taxAmount).toFixed(2));
+
+  const { data: created, error } = await supabaseAdmin
+    .from('invoices')
+    .insert({
+      appointment_id: appt.id,
+      patient_id: appt.patient_id,
+      doctor_id: appt.doctor_id,
+      consultation_fee: consultFee,
+      platform_fee: platformFee,
+      tax_amount: taxAmount,
+      total_amount: totalAmount,
+      payment_method: 'UPI',
+      payment_status: 'paid'
+    })
+    .select(`
+      *,
+      appointment:appointment_id ( id, appointment_date, status, consultation_type ),
+      patient:patient_id ( id, full_name, phone ),
+      doctor:doctor_id ( id, full_name, specialization )
+    `)
+    .single();
+
+  if (error) {
+    return res.status(500).json({ error: error.message });
+  }
+
+  res.status(201).json({ invoice: created });
 });
 
 module.exports = router;
