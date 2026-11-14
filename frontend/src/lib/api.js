@@ -312,6 +312,19 @@ export const recordsApi = {
     return data;
   },
 
+  getSignedFileUrl: async (fileUrl) => {
+    if (!fileUrl) return null;
+    const marker = '/medical-documents/';
+    const idx = fileUrl.indexOf(marker);
+    if (idx === -1) return fileUrl;
+    const storagePath = decodeURIComponent(fileUrl.slice(idx + marker.length));
+    const { data, error } = await supabase.storage
+      .from('medical-documents')
+      .createSignedUrl(storagePath, 3600);
+    if (error || !data?.signedUrl) return fileUrl;
+    return data.signedUrl;
+  },
+
   remove: async (id) => {
     const { error } = await supabase.from('medical_records').delete().eq('id', id);
     if (error) throw error;
