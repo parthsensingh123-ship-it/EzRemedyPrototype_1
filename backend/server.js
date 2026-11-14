@@ -1,60 +1,33 @@
-const chatRoutes = require('./routes/chat');
-const billingRoutes = require('./routes/billing');app.use('/api/chat', chatRoutes);
-app.use('/api/billing', billingRoutes);const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
 require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
 
 const profileRoutes = require('./routes/profile');
-const doctorRoutes = require('./routes/doctors');
-const appointmentRoutes = require('./routes/appointments');
-const recordRoutes = require('./routes/records');
-const reminderRoutes = require('./routes/reminders');
+const doctorsRoutes = require('./routes/doctors');
+const appointmentsRoutes = require('./routes/appointments');
+const recordsRoutes = require('./routes/records');
+const remindersRoutes = require('./routes/reminders');
 const adminRoutes = require('./routes/admin');
-const chatRoutes = require('./routes/chat');
-const billingRoutes = require('./routes/billing');
+const triageRoutes = require('./routes/triage');
 
 const app = express();
-const PORT = process.env.PORT || 5000;
 
-app.use(helmet());
-app.use(
-  cors({
-    origin: process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(',') : '*',
-    credentials: true
-  })
-);
+app.use(cors());
 app.use(express.json());
-app.use(morgan('dev'));
 
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'EzRemedy API',
-    features: ['appointments', 'records', 'reminders', 'chat', 'billing', 'video-rooms'],
-    timestamp: new Date().toISOString()
-  });
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok', service: 'EzRemedy API' });
 });
 
 app.use('/api/profile', profileRoutes);
-app.use('/api/doctors', doctorRoutes);
-app.use('/api/appointments', appointmentRoutes);
-app.use('/api/records', recordRoutes);
-app.use('/api/reminders', reminderRoutes);
+app.use('/api/doctors', doctorsRoutes);
+app.use('/api/appointments', appointmentsRoutes);
+app.use('/api/records', recordsRoutes);
+app.use('/api/reminders', remindersRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/chat', chatRoutes);
-app.use('/api/billing', billingRoutes);
+app.use('/api/triage', triageRoutes);
 
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found.' });
-});
-
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ error: err.message || 'Internal server error.' });
-});
-
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`EzRemedy API server running on port ${PORT}`);
+  console.log(`EzRemedy backend listening on http://localhost:${PORT}`);
 });
