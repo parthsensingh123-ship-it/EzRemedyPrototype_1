@@ -253,7 +253,7 @@ export const recordsApi = {
           .from('medical_records')
           .insert({
             ...payload,
-            doctor_id: payload.doctor_id || uid
+            doctor_id: payload.record_type === 'patient_upload' ? (payload.doctor_id || null) : (payload.doctor_id || uid)
           })
           .select(`
             *,
@@ -265,6 +265,58 @@ export const recordsApi = {
         return data;
       }
     ),
+
+  uploadPatientDocument: async ({ file, title, notes, appointment_id, doctor_id }) => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const uid = sessionData?.session?.user?.id;
+    if (!uid) throw new Error('You must be logged in to upload documents.');
+
+    const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filePath = `${uid}/${Date.now()}_${cleanName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('medical-documents')
+      .upload(filePath, file, {
+        contentType: file.type,
+        upsert: false
+      });
+
+    if (uploadError) {
+      throw new Error(`Storage upload failed: ${uploadError.message}`);
+    }
+
+    const { data: urlData } = supabase.storage
+      .from('medical-documents')
+      .getPublicUrl(filePath);
+
+    const { data, error } = await supabase
+      .from('medical_records')
+      .insert({
+        patient_id: uid,
+        doctor_id: doctor_id || null,
+        appointment_id: appointment_id || null,
+        diagnosis: title || file.name,
+        notes: notes || 'Uploaded by patient',
+        file_url: urlData.publicUrl,
+        file_name: file.name,
+        record_type: 'patient_upload'
+      })
+      .select(`
+        *,
+        patient:profiles!medical_records_patient_id_fkey(id, full_name, phone),
+        doctor:profiles!medical_records_doctor_id_fkey(id, full_name, specialization)
+      `)
+      .single();
+
+    if (error) throw error;
+    return data;
+  },
+
+  remove: async (id) => {
+    const { error } = await supabase.from('medical_records').delete().eq('id', id);
+    if (error) throw error;
+    return { success: true };
+  },
 
   update: (id, payload) =>
     withFallback(
@@ -391,6 +443,7 @@ export const adminApi = {
       }
     )
 };
+
 export const chatApi = {
   list: (appointmentId) =>
     withFallback(
@@ -493,4 +546,5 @@ export const billingApi = {
       }
     )
 };
+
 export default api;
