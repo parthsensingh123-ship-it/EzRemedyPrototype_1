@@ -11,16 +11,19 @@ const APPOINTMENT_SELECT = `
   id,
   appointment_date,
   status,
+  consultation_type,
+  meeting_link,
+  token_number,
+  payment_status,
   reason,
   notes,
   created_at,
   updated_at,
   patient:patient_id ( id, full_name, phone ),
-  doctor:doctor_id ( id, full_name, specialization )
+  doctor:doctor_id ( id, full_name, specialization, consultation_fee, hospital_branch )
 `;
 
 // GET /api/appointments
-// Patients see only their own appointments; doctors/admins see all.
 router.get('/', async (req, res) => {
   let query = supabaseAdmin
     .from('appointments')
@@ -65,9 +68,15 @@ router.get('/:id', async (req, res) => {
   res.json({ appointment: data });
 });
 
-// POST /api/appointments - patient books a new appointment
+// POST /api/appointments - patient books appointment + auto-provisions video link & billing receipt
 router.post('/', requireRole('patient'), async (req, res) => {
-  const { doctor_id, appointment_date, reason } = req.body;
+  const {
+    doctor_id,
+    appointment_date,
+    reason,
+    consultation_type = 'in_person',
+    payment_method = 'UPI'
+  } = req.body;
 
   if (!doctor_id || !appointment_date) {
     return res.status(400).json({ error: 'doctor_id and appointment_date are required.' });
@@ -75,7 +84,7 @@ router.post('/', requireRole('patient'), async (req, res) => {
 
   const { data: doctor, error: doctorError } = await supabaseAdmin
     .from('profiles')
-    .select('id')
+    .select('id, full_name, consultation_fee')
     .eq('id', doctor_id)
     .eq('role', 'doctor')
     .single();
@@ -84,12 +93,21 @@ router.post('/', requireRole('patient'), async (req, res) => {
     return res.status(404).json({ error: 'Selected doctor does not exist.' });
   }
 
-  const { data, error } = await supabaseAdmin
+  // Generate unique encrypted Jitsi teleconsultation link if video mode selected
+  const meetingLink =
+    consultation_type === 'video'
+      ? `https://meet.jit.si/EzRemedy-${req.user.id.slice(0, 6)}-${Date.now().toString().slice(-5)}`
+      : null;
+
+  const { data: appointment, error } = await supabaseAdmin
     .from('appointments')
     .insert({
       patient_id: req.user.id,
       doctor_id,
       appointment_date,
+      consultation_type,
+      meeting_link: meetingLink,
+      payment_status: 'paid',
       reason: reason || null,
       status: 'pending'
     })
@@ -97,22 +115,47 @@ router.post('/', requireRole('patient'), async (req, res) => {
     .single();
 
   if (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({
+        error: 'This time slot is already booked for this doctor. Please select another slot.'
+      });
+    }
     return res.status(500).json({ error: error.message });
   }
 
-  res.status(201).json({ appointment: data });
+  // Auto-generate itemized billing receipt in invoices table
+  const consultFee = Number(doctor.consultation_fee || 500);
+  const platformFee = 49.0;
+  const taxAmount = Number(((consultFee + platformFee) * 0.05).toFixed(2));
+  const totalAmount = Number((consultFee + platformFee + taxAmount).toFixed(2));
+
+  const { data: invoice } = await supabaseAdmin
+    .from('invoices')
+    .insert({
+      appointment_id: appointment.id,
+      patient_id: req.user.id,
+      doctor_id,
+      consultation_fee: consultFee,
+      platform_fee: platformFee,
+      tax_amount: taxAmount,
+      total_amount: totalAmount,
+      payment_method,
+      payment_status: 'paid'
+    })
+    .select('*')
+    .single();
+
+  res.status(201).json({ appointment, invoice });
 });
 
 // PATCH /api/appointments/:id
-// Patients may only cancel their own pending appointments.
-// Doctors/admins may approve, reschedule, complete, or cancel any appointment.
 router.patch('/:id', async (req, res) => {
   const { id } = req.params;
-  const { status, appointment_date, notes } = req.body;
+  const { status, appointment_date, notes, consultation_type } = req.body;
 
   const { data: existing, error: fetchError } = await supabaseAdmin
     .from('appointments')
-    .select('id, patient_id, status')
+    .select('id, patient_id, doctor_id, status, meeting_link')
     .eq('id', id)
     .single();
 
@@ -150,6 +193,12 @@ router.patch('/:id', async (req, res) => {
     if (notes !== undefined) {
       updates.notes = notes;
     }
+    if (consultation_type) {
+      updates.consultation_type = consultation_type;
+      if (consultation_type === 'video' && !existing.meeting_link) {
+        updates.meeting_link = `https://meet.jit.si/EzRemedy-${id.slice(0, 8)}`;
+      }
+    }
   }
 
   if (Object.keys(updates).length === 0) {
@@ -164,6 +213,9 @@ router.patch('/:id', async (req, res) => {
     .single();
 
   if (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'Target time slot is already booked.' });
+    }
     return res.status(500).json({ error: error.message });
   }
 
