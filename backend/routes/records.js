@@ -1,7 +1,6 @@
 const express = require('express');
 const { supabaseAdmin } = require('../config/supabaseClient');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/rbac');
 
 const router = express.Router();
 
@@ -12,84 +11,79 @@ const RECORD_SELECT = `
   diagnosis,
   prescription,
   notes,
+  file_url,
+  file_name,
+  record_type,
+  blood_pressure,
+  heart_rate,
+  temperature,
+  weight_kg,
   created_at,
-  updated_at,
   patient:patient_id ( id, full_name, phone ),
   doctor:doctor_id ( id, full_name, specialization )
 `;
 
 // GET /api/records
-// Patients see only their own records; doctors/admins see all,
-// or filter by ?patient_id= when reviewing a specific patient.
 router.get('/', async (req, res) => {
   let query = supabaseAdmin
     .from('medical_records')
     .select(RECORD_SELECT)
     .order('created_at', { ascending: false });
 
-  if (req.user.role === 'patient') {
-    query = query.eq('patient_id', req.user.id);
-  } else if (req.query.patient_id) {
+  if (req.query.patient_id) {
     query = query.eq('patient_id', req.query.patient_id);
+  } else if (req.user.role === 'patient') {
+    query = query.eq('patient_id', req.user.id);
   }
 
   const { data, error } = await query;
-
   if (error) {
     return res.status(500).json({ error: error.message });
   }
 
-  res.json({ records: data });
+  res.json({ records: data || [] });
 });
 
-// GET /api/records/:id
-router.get('/:id', async (req, res) => {
-  const { id } = req.params;
-
-  const { data, error } = await supabaseAdmin
-    .from('medical_records')
-    .select(RECORD_SELECT)
-    .eq('id', id)
-    .single();
-
-  if (error || !data) {
-    return res.status(404).json({ error: 'Record not found.' });
-  }
-
-  if (req.user.role === 'patient' && data.patient.id !== req.user.id) {
-    return res.status(403).json({ error: 'Access denied.' });
-  }
-
-  res.json({ record: data });
-});
-
-// POST /api/records - doctor/admin creates a record for a patient
-router.post('/', requireRole('doctor', 'admin'), async (req, res) => {
-  const { patient_id, diagnosis, prescription, notes } = req.body;
+// POST /api/records
+router.post('/', async (req, res) => {
+  const {
+    patient_id,
+    doctor_id,
+    appointment_id,
+    diagnosis,
+    prescription,
+    notes,
+    file_url,
+    file_name,
+    record_type,
+    blood_pressure,
+    heart_rate,
+    temperature,
+    weight_kg
+  } = req.body;
 
   if (!patient_id || !diagnosis) {
     return res.status(400).json({ error: 'patient_id and diagnosis are required.' });
   }
 
-  const { data: patient, error: patientError } = await supabaseAdmin
-    .from('profiles')
-    .select('id')
-    .eq('id', patient_id)
-    .eq('role', 'patient')
-    .single();
-
-  if (patientError || !patient) {
-    return res.status(404).json({ error: 'Patient does not exist.' });
-  }
+  const targetDoctorId = doctor_id || (req.user.role === 'doctor' ? req.user.id : null);
 
   const { data, error } = await supabaseAdmin
     .from('medical_records')
     .insert({
       patient_id,
-      doctor_id: req.user.id,
+      doctor_id: targetDoctorId,
+      appointment_id: appointment_id || null,
       diagnosis,
       prescription: prescription || null,
-      notes: notes || null
+      notes: notes || null,
+      file_url: file_url || null,
+      file_name: file_name || null,
+      record_type: record_type || (req.user.role === 'patient' ? 'patient_upload' : 'clinical_note'),
+      blood_pressure: blood_pressure || null,
+      heart_rate: heart_rate ? Number(heart_rate) : null,
+      temperature: temperature ? Number(temperature) : null,
+      weight_kg: weight_kg ? Number(weight_kg) : null
     })
     .select(RECORD_SELECT)
     .single();
@@ -99,38 +93,6 @@ router.post('/', requireRole('doctor', 'admin'), async (req, res) => {
   }
 
   res.status(201).json({ record: data });
-});
-
-// PATCH /api/records/:id - doctor/admin updates a record
-router.patch('/:id', requireRole('doctor', 'admin'), async (req, res) => {
-  const { id } = req.params;
-  const { diagnosis, prescription, notes } = req.body;
-
-  const updates = {};
-  if (diagnosis !== undefined) updates.diagnosis = diagnosis;
-  if (prescription !== undefined) updates.prescription = prescription;
-  if (notes !== undefined) updates.notes = notes;
-
-  if (Object.keys(updates).length === 0) {
-    return res.status(400).json({ error: 'No valid fields provided to update.' });
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from('medical_records')
-    .update(updates)
-    .eq('id', id)
-    .select(RECORD_SELECT)
-    .single();
-
-  if (error) {
-    return res.status(500).json({ error: error.message });
-  }
-
-  if (!data) {
-    return res.status(404).json({ error: 'Record not found.' });
-  }
-
-  res.json({ record: data });
 });
 
 module.exports = router;
