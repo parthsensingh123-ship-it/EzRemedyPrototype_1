@@ -359,21 +359,34 @@ export const adminApi = {
     withFallback(
       () => api.get('/admin/overview').then((r) => r.data),
       async () => {
-        const [patientsRes, doctorsRes, appointmentsRes, recordsRes] = await Promise.all([
+        const [patientsRes, doctorsRes, appointmentsRes] = await Promise.all([
           supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'patient'),
-          supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'doctor'),
-          supabase.from('appointments').select('id, status'),
-          supabase.from('medical_records').select('id', { count: 'exact', head: true })
+          supabase.from('profiles').select('id, full_name, specialization').eq('role', 'doctor'),
+          supabase.from('appointments').select('id, status, doctor_id')
         ]);
+        const doctors = doctorsRes.data || [];
         const appts = appointmentsRes.data || [];
+
+        const status_counts = {
+          pending: appts.filter((a) => a.status === 'pending').length,
+          approved: appts.filter((a) => a.status === 'approved').length,
+          rescheduled: appts.filter((a) => a.status === 'rescheduled').length,
+          completed: appts.filter((a) => a.status === 'completed').length,
+          cancelled: appts.filter((a) => a.status === 'cancelled').length
+        };
+
+        const doctor_load = doctors.map((d) => ({
+          doctor_id: d.id,
+          full_name: d.full_name,
+          specialization: d.specialization,
+          appointment_count: appts.filter((a) => a.doctor_id === d.id && a.status !== 'cancelled').length
+        }));
+
         return {
-          totalPatients: patientsRes.count || 0,
-          totalDoctors: doctorsRes.count || 0,
-          totalAppointments: appts.length,
-          pendingAppointments: appts.filter((a) => a.status === 'pending').length,
-          approvedAppointments: appts.filter((a) => a.status === 'approved').length,
-          completedAppointments: appts.filter((a) => a.status === 'completed').length,
-          totalRecords: recordsRes.count || 0
+          total_doctors: doctors.length,
+          total_patients: patientsRes.count || 0,
+          status_counts,
+          doctor_load
         };
       }
     )
