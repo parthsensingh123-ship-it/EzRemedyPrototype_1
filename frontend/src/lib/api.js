@@ -14,7 +14,6 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Helper: tries Express API first; if offline (e.g. on Netlify static host), runs Supabase query directly
 async function withFallback(apiCall, supabaseFallback) {
   try {
     return await apiCall();
@@ -32,6 +31,39 @@ async function withFallback(apiCall, supabaseFallback) {
       err.response?.data?.error || err.message || 'Something went wrong. Please try again.';
     throw new Error(message);
   }
+}
+
+// Helper: extracts structured medication rows from either `rec.medications` JSONB or formatted `rec.prescription` text
+export function parseMedicationsFromRecord(rec) {
+  if (!rec) return [];
+  if (Array.isArray(rec.medications) && rec.medications.length > 0) {
+    return rec.medications;
+  }
+  if (!rec.prescription || typeof rec.prescription !== 'string') return [];
+
+  const lines = rec.prescription
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const parsed = [];
+  for (const line of lines) {
+    // Matches structured format: "1. Tab. Paracetamol 650mg | Morning & Night (1-0-1) | Twice daily | 5 days | After meals"
+    const clean = line.replace(/^\d+\.\s*/, '');
+    if (clean.includes(' | ')) {
+      const [name, timing, frequency, duration, instructions] = clean.split(' | ').map((s) => s.trim());
+      if (name) {
+        parsed.push({
+          name,
+          timing: timing || 'Morning & Night (1-0-1)',
+          frequency: frequency || 'Twice daily',
+          duration: duration || '5 days',
+          instructions: instructions || 'After meals'
+        });
+      }
+    }
+  }
+  return parsed;
 }
 
 export const profileApi = {
@@ -249,18 +281,40 @@ export const recordsApi = {
       async () => {
         const { data: sessionData } = await supabase.auth.getSession();
         const uid = sessionData?.session?.user?.id;
-        const { data, error } = await supabase
+        const insertPayload = {
+          ...payload,
+          doctor_id:
+            payload.record_type === 'patient_upload'
+              ? payload.doctor_id || null
+              : payload.doctor_id || uid
+        };
+
+        let { data, error } = await supabase
           .from('medical_records')
-          .insert({
-            ...payload,
-            doctor_id: payload.record_type === 'patient_upload' ? (payload.doctor_id || null) : (payload.doctor_id || uid)
-          })
+          .insert(insertPayload)
           .select(`
             *,
             patient:profiles!medical_records_patient_id_fkey(id, full_name, phone),
             doctor:profiles!medical_records_doctor_id_fkey(id, full_name, specialization)
           `)
           .single();
+
+        // Fallback if `medications` jsonb column hasn't been added via SQL yet
+        if (error && insertPayload.medications !== undefined) {
+          const { medications, ...fallbackPayload } = insertPayload;
+          const retry = await supabase
+            .from('medical_records')
+            .insert(fallbackPayload)
+            .select(`
+              *,
+              patient:profiles!medical_records_patient_id_fkey(id, full_name, phone),
+              doctor:profiles!medical_records_doctor_id_fkey(id, full_name, specialization)
+            `)
+            .single();
+          if (retry.error) throw retry.error;
+          return { ...retry.data, medications };
+        }
+
         if (error) throw error;
         return data;
       }
@@ -312,17 +366,34 @@ export const recordsApi = {
     return data;
   },
 
-  getSignedFileUrl: async (fileUrl) => {
-    if (!fileUrl) return null;
-    const marker = '/medical-documents/';
-    const idx = fileUrl.indexOf(marker);
-    if (idx === -1) return fileUrl;
-    const storagePath = decodeURIComponent(fileUrl.slice(idx + marker.length));
-    const { data, error } = await supabase.storage
-      .from('medical-documents')
-      .createSignedUrl(storagePath, 3600);
-    if (error || !data?.signedUrl) return fileUrl;
-    return data.signedUrl;
+  getSignedFileUrl: async (fileUrl, patientId) => {
+    if (fileUrl) {
+      const marker = '/medical-documents/';
+      const idx = fileUrl.indexOf(marker);
+      if (idx !== -1) {
+        const storagePath = decodeURIComponent(fileUrl.slice(idx + marker.length));
+        const { data, error } = await supabase.storage
+          .from('medical-documents')
+          .createSignedUrl(storagePath, 3600);
+        if (!error && data?.signedUrl) return data.signedUrl;
+      }
+      return fileUrl;
+    }
+
+    if (patientId) {
+      const { data: files } = await supabase.storage
+        .from('medical-documents')
+        .list(patientId, { limit: 1, sortBy: { column: 'created_at', order: 'desc' } });
+
+      if (files && files.length > 0) {
+        const fallbackPath = `${patientId}/${files[0].name}`;
+        const { data: signed } = await supabase.storage
+          .from('medical-documents')
+          .createSignedUrl(fallbackPath, 3600);
+        if (signed?.signedUrl) return signed.signedUrl;
+      }
+    }
+    return null;
   },
 
   remove: async (id) => {
