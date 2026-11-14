@@ -1,5 +1,3 @@
-
-
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
@@ -42,6 +40,9 @@ export default function StaffPortal() {
 
   // Consultation Suite Modal (Live Chat, Video Call & Billing Receipt)
   const [suiteModal, setSuiteModal] = useState({ appointment: null, tab: 'chat' });
+
+  // Patient Medical Documents & History Drawer Modal (triggered from any Appointment row)
+  const [inspectAppt, setInspectAppt] = useState(null);
 
   const [rescheduleTarget, setRescheduleTarget] = useState(null);
   const [rescheduleDate, setRescheduleDate] = useState('');
@@ -111,7 +112,7 @@ export default function StaffPortal() {
     loadAll();
   }, [loadAll]);
 
-  // Live Supabase Realtime listener for new incoming patient bookings
+  // Live Supabase Realtime listener for new incoming bookings & patient document uploads
   useEffect(() => {
     if (!profile?.id) return undefined;
 
@@ -120,6 +121,10 @@ export default function StaffPortal() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'appointments' }, () => {
         loadAll(true);
         setNotice('Live queue updated: New appointment activity detected.');
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'medical_records' }, () => {
+        loadAll(true);
+        setNotice('New medical document or record uploaded.');
       })
       .subscribe();
 
@@ -146,7 +151,13 @@ export default function StaffPortal() {
     });
   }, [appointments, statusFilter, searchQuery]);
 
-  // Doctor quick stats
+  // Records belonging to the patient whose appointment the doctor clicked to inspect
+  const inspectedPatientRecords = useMemo(() => {
+    if (!inspectAppt) return [];
+    const targetPatientId = inspectAppt.patient_id || inspectAppt.patient?.id;
+    return records.filter((r) => (r.patient_id || r.patient?.id) === targetPatientId);
+  }, [inspectAppt, records]);
+
   const queueMetrics = useMemo(() => {
     return {
       pending: appointments.filter((a) => a.status === 'pending').length,
@@ -180,7 +191,6 @@ export default function StaffPortal() {
     }
   };
 
-  // One-click "Consult & Write Rx" directly from an appointment row
   const startConsultationRx = (appointment) => {
     setLinkedAppointmentId(appointment.id);
     setRecordForm({
@@ -247,7 +257,6 @@ export default function StaffPortal() {
       const created = await recordsApi.create(payload);
       setRecords((prev) => [created, ...prev]);
 
-      // If created from an active appointment, automatically mark that appointment completed
       if (linkedAppointmentId) {
         const updatedAppt = await appointmentsApi.update(linkedAppointmentId, { status: 'completed' });
         updateAppointmentInList(updatedAppt);
@@ -309,7 +318,6 @@ export default function StaffPortal() {
           </h1>
         </div>
 
-        {/* Live Doctor Queue Metrics */}
         <div className="flex flex-wrap gap-3">
           <div className="bg-status-pendingBg border border-hairline rounded px-3.5 py-2 text-xs">
             <span className="text-status-pending block">Pending requests</span>
@@ -397,7 +405,6 @@ export default function StaffPortal() {
 
           {activeTab === 'appointments' && (
             <div>
-              {/* Filter & Search Bar */}
               <div className="flex flex-col sm:flex-row gap-3 mb-5">
                 <input
                   type="text"
@@ -424,47 +431,60 @@ export default function StaffPortal() {
                 {filteredAppointments.length === 0 ? (
                   <p className="text-sm text-muted py-6">No appointments match the current filter.</p>
                 ) : (
-                  filteredAppointments.map((appt) => (
-                    <div key={appt.id} className="border-b border-hairline last:border-b-0">
-                      <AppointmentRow
-                        appointment={appt}
-                        viewerRole={profile.role}
-                        onCancel={cancelAppointment}
-                        onApprove={approveAppointment}
-                        onComplete={completeAppointment}
-                        onReschedule={openReschedule}
-                      />
-                      {/* Quick Clinical & Consultation Suite Actions Bar */}
-                      {appt.status !== 'cancelled' && (
-                        <div className="pb-4 flex flex-wrap items-center gap-2.5">
-                          <button
-                            onClick={() => startConsultationRx(appt)}
-                            className="btn-primary text-xs py-1 px-3"
-                          >
-                            + Write Clinical Note & Rx
-                          </button>
-                          <button
-                            onClick={() => setSuiteModal({ appointment: appt, tab: 'chat' })}
-                            className="btn-secondary text-xs py-1 px-2.5"
-                          >
-                            Chat with {appt.patient?.full_name?.split(' ')[0] || 'Patient'}
-                          </button>
-                          <button
-                            onClick={() => setSuiteModal({ appointment: appt, tab: 'video' })}
-                            className="btn-secondary text-xs py-1 px-2.5"
-                          >
-                            Video Call
-                          </button>
-                          <button
-                            onClick={() => setSuiteModal({ appointment: appt, tab: 'receipt' })}
-                            className="btn-secondary text-xs py-1 px-2.5"
-                          >
-                            Billing Receipt
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))
+                  filteredAppointments.map((appt) => {
+                    const patientId = appt.patient_id || appt.patient?.id;
+                    const patientDocsCount = records.filter(
+                      (r) => (r.patient_id || r.patient?.id) === patientId
+                    ).length;
+
+                    return (
+                      <div key={appt.id} className="border-b border-hairline last:border-b-0">
+                        <AppointmentRow
+                          appointment={appt}
+                          viewerRole={profile.role}
+                          onCancel={cancelAppointment}
+                          onApprove={approveAppointment}
+                          onComplete={completeAppointment}
+                          onReschedule={openReschedule}
+                        />
+                        {/* Quick Clinical, Patient Uploaded Files & Consultation Suite Actions */}
+                        {appt.status !== 'cancelled' && (
+                          <div className="pb-4 flex flex-wrap items-center gap-2.5">
+                            <button
+                              onClick={() => setInspectAppt(appt)}
+                              className="btn-secondary text-xs py-1 px-2.5 border-accent text-accent font-medium"
+                            >
+                              Patient Records & Uploaded Files ({patientDocsCount})
+                            </button>
+                            <button
+                              onClick={() => startConsultationRx(appt)}
+                              className="btn-primary text-xs py-1 px-3"
+                            >
+                              + Write Clinical Note & Rx
+                            </button>
+                            <button
+                              onClick={() => setSuiteModal({ appointment: appt, tab: 'chat' })}
+                              className="btn-secondary text-xs py-1 px-2.5"
+                            >
+                              Chat with {appt.patient?.full_name?.split(' ')[0] || 'Patient'}
+                            </button>
+                            <button
+                              onClick={() => setSuiteModal({ appointment: appt, tab: 'video' })}
+                              className="btn-secondary text-xs py-1 px-2.5"
+                            >
+                              Video Call
+                            </button>
+                            <button
+                              onClick={() => setSuiteModal({ appointment: appt, tab: 'receipt' })}
+                              className="btn-secondary text-xs py-1 px-2.5"
+                            >
+                              Billing Receipt
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -473,7 +493,7 @@ export default function StaffPortal() {
           {activeTab === 'records' && (
             <div>
               <div className="flex items-center justify-between mb-5">
-                <p className="text-sm text-muted">Diagnoses, vitals, and e-prescriptions on file.</p>
+                <p className="text-sm text-muted">Diagnoses, vitals, patient uploads, and e-prescriptions on file.</p>
                 <button
                   onClick={() => {
                     setLinkedAppointmentId(null);
@@ -489,7 +509,21 @@ export default function StaffPortal() {
                   <p className="text-sm text-muted py-6">No records yet.</p>
                 ) : (
                   records.map((rec) => (
-                    <RecordRow key={rec.id} record={rec} viewerRole={profile.role} />
+                    <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-3">
+                      <RecordRow record={rec} viewerRole={profile.role} />
+                      {rec.file_url && (
+                        <div className="pb-2">
+                          <a
+                            href={rec.file_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded bg-accent text-paper hover:bg-accent-dark"
+                          >
+                            Open Patient Attachment: {rec.file_name || 'Medical Document'} ↗
+                          </a>
+                        </div>
+                      )}
+                    </div>
                   ))
                 )}
               </div>
@@ -570,6 +604,76 @@ export default function StaffPortal() {
         </>
       )}
 
+      {/* Inspect Patient's Uploaded Documents & Medical Records Modal (Triggered from Appointments Queue) */}
+      <Modal
+        open={Boolean(inspectAppt)}
+        onClose={() => setInspectAppt(null)}
+        title={`Medical File · ${inspectAppt?.patient?.full_name || 'Patient'}`}
+      >
+        {inspectAppt && (
+          <div>
+            <div className="bg-panel border border-hairline rounded p-3 mb-4 text-xs">
+              <p className="text-ink font-medium">
+                Appointment: {new Date(inspectAppt.appointment_date).toLocaleString('en-IN')} ({inspectAppt.status})
+              </p>
+              {inspectAppt.reason && <p className="text-muted mt-1">Reason: {inspectAppt.reason}</p>}
+            </div>
+
+            {inspectedPatientRecords.length === 0 ? (
+              <p className="text-sm text-muted py-8 text-center border border-hairline rounded bg-paper mb-4">
+                This patient has not uploaded any lab reports or documents yet.
+              </p>
+            ) : (
+              <div className="max-h-80 overflow-y-auto space-y-3 mb-4">
+                {inspectedPatientRecords.map((rec) => (
+                  <div key={rec.id} className="border border-hairline bg-paper rounded p-3.5 text-xs">
+                    <div className="flex items-start justify-between gap-2 mb-1.5">
+                      <div>
+                        <span className="font-medium text-sm text-ink block">{rec.diagnosis}</span>
+                        <span className="text-faint">
+                          {new Date(rec.created_at).toLocaleDateString('en-IN')} ·{' '}
+                          {rec.record_type === 'patient_upload' ? 'Uploaded by Patient' : 'Clinical Record'}
+                        </span>
+                      </div>
+                      {rec.file_url && (
+                        <a
+                          href={rec.file_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="btn-primary text-xs py-1 px-2.5 shrink-0"
+                        >
+                          View Document ↗
+                        </a>
+                      )}
+                    </div>
+                    {rec.prescription && (
+                      <p className="text-ink mt-1.5 bg-panel p-2 rounded">Rx: {rec.prescription}</p>
+                    )}
+                    {rec.notes && <p className="text-muted mt-1">{rec.notes}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  const target = inspectAppt;
+                  setInspectAppt(null);
+                  startConsultationRx(target);
+                }}
+                className="btn-primary flex-1 text-xs"
+              >
+                + Write Clinical Note & Rx
+              </button>
+              <button onClick={() => setInspectAppt(null)} className="btn-secondary text-xs">
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       <Modal open={Boolean(rescheduleTarget)} onClose={() => setRescheduleTarget(null)} title="Reschedule appointment">
         {rescheduleTarget && (
           <form onSubmit={submitReschedule}>
@@ -620,7 +724,6 @@ export default function StaffPortal() {
             </select>
           </div>
 
-          {/* Patient Vitals Row */}
           <div className="grid grid-cols-4 gap-2 mb-4">
             <div>
               <label className="field-label text-xs">BP (mmHg)</label>
@@ -707,7 +810,6 @@ export default function StaffPortal() {
         </form>
       </Modal>
 
-      {/* Live Chat, Embedded Video Call & GST Billing Receipt Modal */}
       <ConsultationSuiteModal
         appointment={suiteModal.appointment}
         currentUser={profile}
