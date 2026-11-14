@@ -2,7 +2,14 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
-import { doctorsApi, appointmentsApi, recordsApi, remindersApi, profileApi } from '../lib/api';
+import {
+  doctorsApi,
+  appointmentsApi,
+  recordsApi,
+  remindersApi,
+  profileApi,
+  parseMedicationsFromRecord
+} from '../lib/api';
 import DoctorCard from '../components/DoctorCard';
 import AppointmentRow from '../components/AppointmentRow';
 import RecordRow from '../components/RecordRow';
@@ -136,7 +143,7 @@ export default function PatientDashboard() {
         { event: 'INSERT', schema: 'public', table: 'medical_records', filter: `patient_id=eq.${profile.id}` },
         () => {
           loadAll(true);
-          setNotice('New medical record added to your file.');
+          setNotice('New digital e-prescription added by your doctor!');
         }
       )
       .subscribe();
@@ -269,7 +276,34 @@ export default function PatientDashboard() {
     }
   };
 
+  // Pre-fills the Reminder Modal from a specific prescribed medicine row
+  const createReminderFromMedItem = (med, record) => {
+    const daysMatch = med.duration?.match(/(\d+)/);
+    const numDays = daysMatch ? parseInt(daysMatch[1], 10) : 5;
+    const startObj = new Date();
+    const endObj = new Date(startObj.getTime() + numDays * 86400000);
+
+    let defaultTime = '09:00';
+    if (med.timing?.includes('0-1-0')) defaultTime = '14:00';
+    else if (med.timing?.includes('0-0-1')) defaultTime = '21:00';
+
+    setReminderForm({
+      medication_name: med.name,
+      dosage: `${med.timing} (${med.instructions || 'After meals'})`,
+      frequency: med.frequency || 'Twice daily',
+      start_date: startObj.toISOString().split('T')[0],
+      end_date: record?.follow_up_date || endObj.toISOString().split('T')[0],
+      reminder_time: defaultTime
+    });
+    setShowReminderForm(true);
+  };
+
   const createReminderFromPrescription = (record) => {
+    const parsedMeds = parseMedicationsFromRecord(record);
+    if (parsedMeds.length > 0) {
+      createReminderFromMedItem(parsedMeds[0], record);
+      return;
+    }
     setReminderForm({
       medication_name: record.prescription || record.diagnosis || '',
       dosage: 'As prescribed',
@@ -502,7 +536,7 @@ export default function PatientDashboard() {
             <div>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
                 <p className="text-sm text-muted">
-                  Your doctor prescriptions, clinical notes, and uploaded lab reports/scans.
+                  Your doctor e-prescriptions, itemized medication schedules, and uploaded lab reports.
                 </p>
                 <button
                   onClick={() => {
@@ -521,78 +555,127 @@ export default function PatientDashboard() {
                     No records yet. Upload past lab reports or prescriptions above so your doctor can review them before your visit.
                   </p>
                 ) : (
-                  records.map((rec) => (
-                    <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-3">
-                      <RecordRow record={rec} viewerRole="patient" />
+                  records.map((rec) => {
+                    const parsedMeds = parseMedicationsFromRecord(rec);
 
-                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
-                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-                          {rec.record_type === 'patient_upload' && (
-                            <span className="px-2 py-0.5 bg-status-pendingBg text-status-pending border border-hairline rounded font-medium">
-                              Patient Uploaded File
-                            </span>
-                          )}
-                          {rec.blood_pressure && (
-                            <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
-                              BP: {rec.blood_pressure}
-                            </span>
-                          )}
-                          {rec.heart_rate && (
-                            <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
-                              HR: {rec.heart_rate} bpm
-                            </span>
-                          )}
-                          {rec.temperature && (
-                            <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
-                              Temp: {rec.temperature} °F
-                            </span>
-                          )}
-                          {rec.weight_kg && (
-                            <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
-                              Weight: {rec.weight_kg} kg
-                            </span>
-                          )}
-                        </div>
+                    return (
+                      <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-4">
+                        <RecordRow record={rec} viewerRole="patient" />
 
-                        <div className="flex items-center gap-2.5">
-                          {rec.file_url && (
-                            <a
-                              href={rec.file_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="btn-primary text-xs py-1 px-2.5"
-                            >
-                              View Uploaded File ({rec.file_name || 'Document'}) ↗
-                            </a>
-                          )}
-                          {rec.prescription && (
-                            <button
-                              onClick={() => createReminderFromPrescription(rec)}
-                              className="text-xs text-accent hover:underline font-medium"
-                            >
-                              + Set pill reminder
-                            </button>
-                          )}
-                          {rec.record_type !== 'patient_upload' && (
-                            <button
-                              onClick={() => setSelectedPrescription(rec)}
-                              className="btn-secondary text-xs py-1 px-2.5"
-                            >
-                              View / Print E-Prescription
-                            </button>
-                          )}
-                          {rec.record_type === 'patient_upload' && (
-                            <button
-                              onClick={() => deleteUploadedDoc(rec.id)}
-                              className="text-xs text-status-cancelled hover:underline"
-                            >
-                              Delete
-                            </button>
-                          )}
+                        {/* Itemized Medication Schedule Table for Patient */}
+                        {parsedMeds.length > 0 && (
+                          <div className="mt-2 mb-3 bg-paper border border-hairline rounded overflow-hidden">
+                            <div className="px-3.5 py-2 bg-panel border-b border-hairline flex items-center justify-between">
+                              <span className="text-xs font-semibold text-ink">
+                                ℞ Prescribed Medicines & Dosage Timings ({parsedMeds.length})
+                              </span>
+                              <span className="text-[11px] text-muted">
+                                Click "+ Set reminder" to add to your daily pill tracker
+                              </span>
+                            </div>
+                            <div className="divide-y divide-hairline">
+                              {parsedMeds.map((med, idx) => (
+                                <div
+                                  key={idx}
+                                  className="px-3.5 py-2.5 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                                >
+                                  <div>
+                                    <p className="font-semibold text-ink text-sm">{med.name}</p>
+                                    <p className="text-muted mt-0.5">
+                                      Instruction: <strong className="text-ink">{med.instructions}</strong> · Duration:{' '}
+                                      <strong className="text-ink">{med.duration}</strong>
+                                    </p>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="px-2.5 py-1 rounded bg-panel border border-hairline text-ink font-medium">
+                                      {med.timing}
+                                    </span>
+                                    <span className="px-2.5 py-1 rounded bg-status-approvedBg text-status-approved font-medium">
+                                      {med.frequency}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => createReminderFromMedItem(med, rec)}
+                                      className="btn-secondary text-xs py-1 px-2.5 border-accent text-accent font-medium"
+                                    >
+                                      + Set pill reminder
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                            {rec.record_type === 'patient_upload' && (
+                              <span className="px-2 py-0.5 bg-status-pendingBg text-status-pending border border-hairline rounded font-medium">
+                                Patient Uploaded File
+                              </span>
+                            )}
+                            {rec.blood_pressure && (
+                              <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
+                                BP: {rec.blood_pressure}
+                              </span>
+                            )}
+                            {rec.heart_rate && (
+                              <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
+                                HR: {rec.heart_rate} bpm
+                              </span>
+                            )}
+                            {rec.temperature && (
+                              <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
+                                Temp: {rec.temperature} °F
+                              </span>
+                            )}
+                            {rec.weight_kg && (
+                              <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
+                                Weight: {rec.weight_kg} kg
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2.5">
+                            {rec.file_url && (
+                              <a
+                                href={rec.file_url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn-primary text-xs py-1 px-2.5"
+                              >
+                                View Uploaded File ({rec.file_name || 'Document'}) ↗
+                              </a>
+                            )}
+                            {rec.prescription && parsedMeds.length === 0 && (
+                              <button
+                                onClick={() => createReminderFromPrescription(rec)}
+                                className="text-xs text-accent hover:underline font-medium"
+                              >
+                                + Set pill reminder
+                              </button>
+                            )}
+                            {rec.record_type !== 'patient_upload' && (
+                              <button
+                                onClick={() => setSelectedPrescription(rec)}
+                                className="btn-secondary text-xs py-1 px-2.5"
+                              >
+                                View / Print Official E-Prescription
+                              </button>
+                            )}
+                            {rec.record_type === 'patient_upload' && (
+                              <button
+                                onClick={() => deleteUploadedDoc(rec.id)}
+                                className="text-xs text-status-cancelled hover:underline"
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -825,7 +908,7 @@ export default function PatientDashboard() {
         )}
       </Modal>
 
-      {/* Printable E-Prescription Modal */}
+      {/* Printable Official E-Prescription Modal with Itemized Table */}
       <Modal
         open={Boolean(selectedPrescription)}
         onClose={() => setSelectedPrescription(null)}
@@ -867,10 +950,38 @@ export default function PatientDashboard() {
               </div>
 
               <div className="mb-4">
-                <p className="text-xs uppercase tracking-wider text-faint mb-1">℞ Prescribed Medications</p>
-                <p className="text-sm text-ink whitespace-pre-line bg-panel p-3 rounded border border-hairline">
-                  {selectedPrescription.prescription || 'General supportive care advised.'}
-                </p>
+                <p className="text-xs uppercase tracking-wider text-faint mb-2">℞ Prescribed Medication Schedule</p>
+                {parseMedicationsFromRecord(selectedPrescription).length > 0 ? (
+                  <div className="border border-hairline rounded overflow-hidden">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-panel border-b border-hairline text-muted">
+                        <tr>
+                          <th className="py-2 px-2.5">Medicine</th>
+                          <th className="py-2 px-2.5">Timing</th>
+                          <th className="py-2 px-2.5">Frequency</th>
+                          <th className="py-2 px-2.5">Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-hairline">
+                        {parseMedicationsFromRecord(selectedPrescription).map((m, idx) => (
+                          <tr key={idx}>
+                            <td className="py-2 px-2.5 font-medium text-ink">
+                              {m.name}
+                              <span className="block text-[11px] text-muted font-normal">{m.instructions}</span>
+                            </td>
+                            <td className="py-2 px-2.5 text-ink">{m.timing}</td>
+                            <td className="py-2 px-2.5 text-ink">{m.frequency}</td>
+                            <td className="py-2 px-2.5 text-ink">{m.duration}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-ink whitespace-pre-line bg-panel p-3 rounded border border-hairline">
+                    {selectedPrescription.prescription || 'General supportive care advised.'}
+                  </p>
+                )}
               </div>
 
               {selectedPrescription.notes && (
@@ -907,11 +1018,11 @@ export default function PatientDashboard() {
           </div>
           <div className="grid grid-cols-2 gap-4 mb-5">
             <div>
-              <label htmlFor="dosage" className="field-label">Dosage</label>
+              <label htmlFor="dosage" className="field-label">Dosage & timing</label>
               <input
                 id="dosage"
                 required
-                placeholder="e.g. 500mg"
+                placeholder="e.g. Morning & Night (1-0-1)"
                 value={reminderForm.dosage}
                 onChange={(e) => setReminderForm((f) => ({ ...f, dosage: e.target.value }))}
                 className="field-input"
@@ -953,7 +1064,7 @@ export default function PatientDashboard() {
             </div>
           </div>
           <div className="mb-6">
-            <label htmlFor="reminderTime" className="field-label">Reminder time</label>
+            <label htmlFor="reminderTime" className="field-label">Reminder alarm time</label>
             <input
               id="reminderTime"
               type="time"
