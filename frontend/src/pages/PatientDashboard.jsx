@@ -1,4 +1,3 @@
-import ConsultationSuiteModal from '../components/ConsultationSuiteModal';
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
@@ -10,6 +9,7 @@ import RecordRow from '../components/RecordRow';
 import ReminderRow from '../components/ReminderRow';
 import Modal from '../components/Modal';
 import Spinner from '../components/Spinner';
+import ConsultationSuiteModal from '../components/ConsultationSuiteModal';
 
 const TABS = [
   { id: 'book', label: 'Find a doctor' },
@@ -47,6 +47,9 @@ export default function PatientDashboard() {
   const [consultationType, setConsultationType] = useState('in_person');
   const [bookingReason, setBookingReason] = useState('');
   const [bookingSubmitting, setBookingSubmitting] = useState(false);
+
+  // Consultation Suite Modal (Live Chat, Video Call & Billing Receipt)
+  const [suiteModal, setSuiteModal] = useState({ appointment: null, tab: 'chat' });
 
   // Printable Prescription Modal
   const [selectedPrescription, setSelectedPrescription] = useState(null);
@@ -416,26 +419,29 @@ export default function PatientDashboard() {
                       viewerRole="patient"
                       onCancel={cancelAppointment}
                     />
-                    {/* Extra Clinical Metadata Bar (Video Link / Token) */}
-                    {(appt.meeting_link || appt.consultation_type === 'video' || appt.reason?.includes('Video')) &&
-                      appt.status === 'approved' && (
-                        <div className="pb-4 flex flex-wrap items-center gap-3">
-                          <a
-                            href={
-                              appt.meeting_link ||
-                              `https://meet.jit.si/EzRemedy-${appt.id.slice(0, 8)}`
-                            }
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded bg-accent text-paper hover:bg-accent-dark transition-colors"
-                          >
-                            Join Live Video Consultation Room →
-                          </a>
-                          <span className="text-xs text-muted">
-                             Opens encrypted Jitsi teleconsultation in a new tab
-                          </span>
-                        </div>
-                      )}
+                    {/* Consultation Suite Actions: Chat, Video Call & Billing Receipt */}
+                    {appt.status !== 'cancelled' && (
+                      <div className="pb-4 flex flex-wrap items-center gap-2.5">
+                        <button
+                          onClick={() => setSuiteModal({ appointment: appt, tab: 'chat' })}
+                          className="btn-secondary text-xs py-1 px-2.5"
+                        >
+                          Chat with Doctor
+                        </button>
+                        <button
+                          onClick={() => setSuiteModal({ appointment: appt, tab: 'video' })}
+                          className="btn-secondary text-xs py-1 px-2.5"
+                        >
+                          Video Call
+                        </button>
+                        <button
+                          onClick={() => setSuiteModal({ appointment: appt, tab: 'receipt' })}
+                          className="btn-secondary text-xs py-1 px-2.5"
+                        >
+                          Billing Receipt
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))
               )}
@@ -801,6 +807,14 @@ export default function PatientDashboard() {
           </button>
         </form>
       </Modal>
+
+      {/* Live Chat, Embedded Video Call & GST Billing Receipt Modal */}
+      <ConsultationSuiteModal
+        appointment={suiteModal.appointment}
+        currentUser={profile}
+        initialTab={suiteModal.tab}
+        onClose={() => setSuiteModal({ appointment: null, tab: 'chat' })}
+      />
     </div>
   );
 }
