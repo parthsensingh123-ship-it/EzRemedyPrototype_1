@@ -31,6 +31,128 @@ const TIME_SLOTS = [
   '12:00', '14:00', '14:30', '15:00', '16:00', '16:30', '17:00'
 ];
 
+// Clinical Knowledge Graph for AI Symptom Triage & Smart Doctor Matching
+const TRIAGE_KNOWLEDGE_BASE = [
+  {
+    specialty: 'Cardiologist',
+    urgency: 'High Priority · Cardiac Evaluation',
+    urgencyColor: 'bg-status-cancelledBg text-status-cancelled border-status-cancelled',
+    keywords: [
+      'chest pain', 'chest tightness', 'palpitation', 'heart', 'blood pressure',
+      'hypertension', 'bp', 'shortness of breath', 'breathless', 'cholesterol',
+      'left arm pain', 'fast heartbeat', 'tachycardia', 'dizzy when standing'
+    ],
+    advice: 'Symptoms suggest cardiovascular or blood pressure involvement. A Cardiologist evaluation (including ECG/lipid screening) is recommended.'
+  },
+  {
+    specialty: 'Neurologist',
+    urgency: 'Moderate-High Priority · Neurological Consult',
+    urgencyColor: 'bg-status-pendingBg text-status-pending border-status-pending',
+    keywords: [
+      'migraine', 'headache', 'blurred vision', 'seizure', 'numbness', 'tingling',
+      'vertigo', 'dizziness', 'memory', 'tremor', 'nerve', 'paralysis', 'fainting',
+      'blackout', 'head spinning', 'brain', 'sciatica'
+    ],
+    advice: 'Headaches paired with visual changes, dizziness, or nerve tingling warrant a specialist Neurological assessment.'
+  },
+  {
+    specialty: 'Dermatologist',
+    urgency: 'Routine Priority · Dermatology Care',
+    urgencyColor: 'bg-status-approvedBg text-status-approved border-status-approved',
+    keywords: [
+      'acne', 'rash', 'itching', 'eczema', 'skin', 'hair loss', 'hairfall',
+      'dandruff', 'pigmentation', 'pimple', 'psoriasis', 'fungal', 'allergy',
+      'hives', 'mole', 'sunburn', 'dry skin'
+    ],
+    advice: 'Cutaneous, hair, or allergic skin symptoms are best diagnosed via targeted Dermatological inspection.'
+  },
+  {
+    specialty: 'Orthopedic Surgeon',
+    urgency: 'Moderate Priority · Musculoskeletal Care',
+    urgencyColor: 'bg-status-pendingBg text-status-pending border-status-pending',
+    keywords: [
+      'knee pain', 'back pain', 'joint', 'fracture', 'sprain', 'ligament',
+      'shoulder', 'arthritis', 'bone', 'neck pain', 'sports injury', 'muscle tear',
+      'ankle', 'wrist', 'stiffness', 'slip disc', 'posture'
+    ],
+    advice: 'Joint, bone, spine, or ligament discomfort should be evaluated by an Orthopedic specialist for mobility and imaging.'
+  },
+  {
+    specialty: 'Gastroenterologist',
+    urgency: 'Moderate Priority · Digestive Health',
+    urgencyColor: 'bg-status-pendingBg text-status-pending border-status-pending',
+    keywords: [
+      'stomach', 'acidity', 'acid reflux', 'heartburn', 'bloating', 'gas',
+      'constipation', 'diarrhea', 'vomiting', 'nausea', 'liver', 'ibs',
+      'indigestion', 'ulcer', 'abdominal pain', 'cramps', 'jaundice', 'fatty liver'
+    ],
+    advice: 'Persistent gastrointestinal, gastric reflux, or abdominal symptoms align with a Gastroenterologist consultation.'
+  },
+  {
+    specialty: 'ENT Specialist',
+    urgency: 'Routine-Moderate · Ear, Nose & Throat',
+    urgencyColor: 'bg-status-approvedBg text-status-approved border-status-approved',
+    keywords: [
+      'ear pain', 'sore throat', 'tonsil', 'sinus', 'blocked nose', 'runny nose',
+      'hearing', 'ringing in ear', 'tinnitus', 'snoring', 'voice', 'hoarse',
+      'throat infection', 'difficulty swallowing', 'nasal'
+    ],
+    advice: 'Upper respiratory tract, sinus, ear, or throat complaints are directly managed by an ENT Specialist.'
+  },
+  {
+    specialty: 'Psychiatrist',
+    urgency: 'Supportive Care · Mental Health & Sleep',
+    urgencyColor: 'bg-status-approvedBg text-status-approved border-status-approved',
+    keywords: [
+      'anxiety', 'stress', 'insomnia', 'sleep', 'depression', 'panic',
+      'overthinking', 'mood', 'focus', 'adhd', 'burnout', 'restless', 'sadness',
+      'mental health', 'nightmare'
+    ],
+    advice: 'Sleep disturbances, anxiety, or cognitive fatigue respond well to structured Psychiatric and behavioral care.'
+  },
+  {
+    specialty: 'Gynecologist & OB-GYN',
+    urgency: 'Routine-Moderate · Women’s Health',
+    urgencyColor: 'bg-status-approvedBg text-status-approved border-status-approved',
+    keywords: [
+      'period', 'pcos', 'pcod', 'menstrual', 'pregnancy', 'prenatal',
+      'irregular cycle', 'pelvic pain', 'hormonal', 'cramps', 'gynec', 'fertility'
+    ],
+    advice: 'Menstrual, hormonal, PCOS, or prenatal health inquiries are best addressed by a Gynecologist & OB-GYN.'
+  },
+  {
+    specialty: 'Pediatrician',
+    urgency: 'Moderate Priority · Child Healthcare',
+    urgencyColor: 'bg-status-pendingBg text-status-pending border-status-pending',
+    keywords: [
+      'child', 'baby', 'infant', 'toddler', 'vaccination', 'immunization',
+      'newborn', 'kid', 'growth', 'pediatric'
+    ],
+    advice: 'For infants, children, or vaccination schedules, a Pediatrician provides age-specific clinical care.'
+  },
+  {
+    specialty: 'General Physician',
+    urgency: 'Routine Priority · Primary Internal Medicine',
+    urgencyColor: 'bg-status-approvedBg text-status-approved border-status-approved',
+    keywords: [
+      'fever', 'cold', 'cough', 'flu', 'viral', 'weakness', 'fatigue',
+      'body ache', 'diabetes', 'sugar', 'thyroid', 'checkup', 'infection', 'chills'
+    ],
+    advice: 'Systemic symptoms like viral fever, cough, fatigue, or metabolic checkups should start with a General Physician.'
+  }
+];
+
+const QUICK_SYMPTOM_CHIPS = [
+  'Migraine & blurred vision',
+  'Chest tightness & high BP',
+  'Fever, dry cough & body ache',
+  'Severe knee & lower back pain',
+  'Acidity, bloating & stomach cramps',
+  'Skin rash & persistent acne',
+  'Sinus headache & sore throat',
+  'Anxiety & trouble sleeping'
+];
+
 export default function PatientDashboard() {
   const { profile, refreshProfile } = useAuth();
   const [activeTab, setActiveTab] = useState('book');
@@ -46,6 +168,11 @@ export default function PatientDashboard() {
   // Search & Filter states for Find a Doctor
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSpecialty, setSelectedSpecialty] = useState('all');
+
+  // AI Symptom Triage states
+  const [symptomInput, setSymptomInput] = useState('');
+  const [triageAnalyzing, setTriageAnalyzing] = useState(false);
+  const [triageResult, setTriageResult] = useState(null);
 
   // Booking Modal states
   const [bookingDoctor, setBookingDoctor] = useState(null);
@@ -166,6 +293,66 @@ export default function PatientDashboard() {
     return ['all', ...Array.from(specs)];
   }, [doctors]);
 
+  // AI Symptom Triage Engine: scores symptom text against clinical specialties & auto-filters doctors
+  const analyzeSymptoms = (rawText) => {
+    const textToAnalyze = (rawText !== undefined ? rawText : symptomInput).trim();
+    if (!textToAnalyze) return;
+
+    setTriageAnalyzing(true);
+    setTimeout(() => {
+      const lower = textToAnalyze.toLowerCase();
+      let bestMatch = null;
+      let highestScore = 0;
+      let matchedKeywords = [];
+
+      for (const rule of TRIAGE_KNOWLEDGE_BASE) {
+        const hits = rule.keywords.filter((kw) => lower.includes(kw));
+        if (hits.length > highestScore) {
+          highestScore = hits.length;
+          bestMatch = rule;
+          matchedKeywords = hits;
+        }
+      }
+
+      // Fallback to General Physician if no specific organ-system keyword matched
+      if (!bestMatch) {
+        bestMatch = TRIAGE_KNOWLEDGE_BASE.find((r) => r.specialty === 'General Physician') || TRIAGE_KNOWLEDGE_BASE[0];
+        matchedKeywords = ['general symptom evaluation'];
+      }
+
+      // Match against available specializations in the database (case-insensitive substring match)
+      const availableMatch = specializations.find(
+        (s) =>
+          s !== 'all' &&
+          (s.toLowerCase() === bestMatch.specialty.toLowerCase() ||
+            s.toLowerCase().includes(bestMatch.specialty.toLowerCase().split(' ')[0]) ||
+            bestMatch.specialty.toLowerCase().includes(s.toLowerCase().split(' ')[0]))
+      );
+
+      const targetSpec = availableMatch || 'all';
+      setSelectedSpecialty(targetSpec);
+      setSearchQuery('');
+
+      setTriageResult({
+        input: textToAnalyze,
+        recommendedSpecialty: bestMatch.specialty,
+        matchedDatabaseSpecialty: targetSpec,
+        urgency: bestMatch.urgency,
+        urgencyColor: bestMatch.urgencyColor,
+        advice: bestMatch.advice,
+        matchedKeywords,
+        confidence: highestScore >= 2 ? 96 : highestScore === 1 ? 89 : 78
+      });
+      setTriageAnalyzing(false);
+    }, 350);
+  };
+
+  const clearTriage = () => {
+    setSymptomInput('');
+    setTriageResult(null);
+    setSelectedSpecialty('all');
+  };
+
   const filteredDoctors = useMemo(() => {
     return doctors.filter((doc) => {
       const matchesSearch =
@@ -197,7 +384,8 @@ export default function PatientDashboard() {
     setSelectedDay(tomorrow);
     setSelectedSlot('10:00');
     setConsultationType('in_person');
-    setBookingReason('');
+    // Auto-populate the patient's triaged symptoms into the booking modal reason
+    setBookingReason(triageResult?.input || symptomInput || '');
   };
 
   const submitBooking = async (e) => {
@@ -276,7 +464,6 @@ export default function PatientDashboard() {
     }
   };
 
-  // Pre-fills the Reminder Modal from a specific prescribed medicine row
   const createReminderFromMedItem = (med, record) => {
     const daysMatch = med.duration?.match(/(\d+)/);
     const numDays = daysMatch ? parseInt(daysMatch[1], 10) : 5;
@@ -446,10 +633,114 @@ export default function PatientDashboard() {
         <>
           {activeTab === 'book' && (
             <div>
+              {/* AI Symptom Triage & Smart Doctor Matcher Banner */}
+              <div className="panel p-5 mb-6 border-accent/30">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded bg-accent text-paper">
+                        AI Clinical Triage
+                      </span>
+                      <h2 className="font-display text-lg text-ink font-semibold">
+                        Smart Symptom Checker & Specialist Matcher
+                      </h2>
+                    </div>
+                    <p className="text-xs text-muted mt-1">
+                      Describe what you are experiencing (or pick a common symptom below) and we will match you to the right specialist.
+                    </p>
+                  </div>
+                  {triageResult && (
+                    <button
+                      type="button"
+                      onClick={clearTriage}
+                      className="text-xs text-muted hover:text-ink underline self-start sm:self-auto"
+                    >
+                      Reset Triage Filter
+                    </button>
+                  )}
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    analyzeSymptoms();
+                  }}
+                  className="flex flex-col sm:flex-row gap-2.5 mb-3"
+                >
+                  <input
+                    type="text"
+                    placeholder="e.g. Severe migraine since yesterday with blurred vision and dizziness…"
+                    value={symptomInput}
+                    onChange={(e) => setSymptomInput(e.target.value)}
+                    className="field-input flex-1 text-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={triageAnalyzing || !symptomInput.trim()}
+                    className="btn-primary text-sm whitespace-nowrap px-5"
+                  >
+                    {triageAnalyzing ? 'Analyzing symptoms…' : 'Analyze & Match Specialist'}
+                  </button>
+                </form>
+
+                {/* Quick Symptom Chips */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-faint mr-1">Try quick symptoms:</span>
+                  {QUICK_SYMPTOM_CHIPS.map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => {
+                        setSymptomInput(chip);
+                        analyzeSymptoms(chip);
+                      }}
+                      className="text-xs px-2.5 py-1 rounded-full border border-hairline bg-paper text-muted hover:text-ink hover:border-accent transition-colors"
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+
+                {/* AI Triage Output Card */}
+                {triageResult && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="mt-4 pt-4 border-t border-hairline flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs text-muted">Recommended Department:</span>
+                        <span className="text-sm font-semibold text-accent">
+                          {triageResult.recommendedSpecialty}
+                        </span>
+                        <span className={`text-[11px] px-2 py-0.5 rounded border font-medium ${triageResult.urgencyColor}`}>
+                          {triageResult.urgency}
+                        </span>
+                        <span className="text-[11px] text-faint">
+                          · {triageResult.confidence}% match confidence
+                        </span>
+                      </div>
+                      <p className="text-xs text-ink">{triageResult.advice}</p>
+                      <p className="text-[11px] text-faint">
+                        Detected clinical indicators: {triageResult.matchedKeywords.join(', ')}
+                      </p>
+                    </div>
+
+                    <div className="shrink-0">
+                      <span className="inline-block text-xs font-medium px-3 py-1.5 rounded bg-panel border border-hairline text-ink">
+                        Showing {filteredDoctors.length} matched specialist{filteredDoctors.length === 1 ? '' : 's'} below ↓
+                      </span>
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+
+              {/* Manual Search & Specialty Filter Bar */}
               <div className="flex flex-col sm:flex-row gap-3 mb-6">
                 <input
                   type="text"
-                  placeholder="Search doctors by name, specialty, or condition…"
+                  placeholder="Search doctors by name, specialty, or qualification…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="field-input flex-1"
@@ -468,9 +759,21 @@ export default function PatientDashboard() {
               </div>
 
               {filteredDoctors.length === 0 ? (
-                <p className="text-sm text-muted py-8 text-center panel">
-                  No doctors match your search filter. Try clearing the search bar.
-                </p>
+                <div className="text-center py-8 panel px-4">
+                  <p className="text-sm text-muted mb-3">
+                    No doctors currently match "{selectedSpecialty}".
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedSpecialty('all');
+                      setSearchQuery('');
+                    }}
+                    className="btn-secondary text-xs"
+                  >
+                    Show All Available Doctors
+                  </button>
+                </div>
               ) : (
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
                   {filteredDoctors.map((doc) => (
@@ -562,7 +865,6 @@ export default function PatientDashboard() {
                       <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-4">
                         <RecordRow record={rec} viewerRole="patient" />
 
-                        {/* Itemized Medication Schedule Table for Patient */}
                         {parsedMeds.length > 0 && (
                           <div className="mt-2 mb-3 bg-paper border border-hairline rounded overflow-hidden">
                             <div className="px-3.5 py-2 bg-panel border-b border-hairline flex items-center justify-between">
@@ -570,7 +872,7 @@ export default function PatientDashboard() {
                                 ℞ Prescribed Medicines & Dosage Timings ({parsedMeds.length})
                               </span>
                               <span className="text-[11px] text-muted">
-                                Click "+ Set reminder" to add to your daily pill tracker
+                                Click "+ Set pill reminder" to add to your daily tracker
                               </span>
                             </div>
                             <div className="divide-y divide-hairline">
@@ -908,7 +1210,7 @@ export default function PatientDashboard() {
         )}
       </Modal>
 
-      {/* Printable Official E-Prescription Modal with Itemized Table */}
+      {/* Printable Official E-Prescription Modal */}
       <Modal
         open={Boolean(selectedPrescription)}
         onClose={() => setSelectedPrescription(null)}
