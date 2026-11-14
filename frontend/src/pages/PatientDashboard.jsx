@@ -54,6 +54,14 @@ export default function PatientDashboard() {
   // Printable Prescription Modal
   const [selectedPrescription, setSelectedPrescription] = useState(null);
 
+  // Upload Medical Document Modal states
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploadFile, setUploadFile] = useState(null);
+  const [uploadTitle, setUploadTitle] = useState('');
+  const [uploadNotes, setUploadNotes] = useState('');
+  const [uploadAppointmentId, setUploadAppointmentId] = useState('');
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+
   // Reminder Modal states
   const [showReminderForm, setShowReminderForm] = useState(false);
   const [reminderForm, setReminderForm] = useState({
@@ -128,7 +136,7 @@ export default function PatientDashboard() {
         { event: 'INSERT', schema: 'public', table: 'medical_records', filter: `patient_id=eq.${profile.id}` },
         () => {
           loadAll(true);
-          setNotice('New medical record and e-prescription added by your doctor.');
+          setNotice('New medical record added to your file.');
         }
       )
       .subscribe();
@@ -144,7 +152,6 @@ export default function PatientDashboard() {
     return () => clearTimeout(t);
   }, [notice]);
 
-  // Extract unique specializations for filter dropdown
   const specializations = useMemo(() => {
     const specs = new Set(
       doctors.map((d) => d.specialization || 'General Practice').filter(Boolean)
@@ -165,7 +172,6 @@ export default function PatientDashboard() {
     });
   }, [doctors, searchQuery, selectedSpecialty]);
 
-  // Summary counters
   const stats = useMemo(() => {
     const upcoming = appointments.filter(
       (a) => ['pending', 'approved', 'rescheduled'].includes(a.status) && new Date(a.appointment_date) >= new Date()
@@ -222,6 +228,44 @@ export default function PatientDashboard() {
       setNotice('Appointment cancelled.');
     } catch (err) {
       setError(err.message || 'Could not cancel this appointment.');
+    }
+  };
+
+  const handleDocumentUpload = async (e) => {
+    e.preventDefault();
+    if (!uploadFile) return;
+    setUploadingDoc(true);
+    setError('');
+    try {
+      const selectedAppt = appointments.find((a) => a.id === uploadAppointmentId);
+      const created = await recordsApi.uploadPatientDocument({
+        file: uploadFile,
+        title: uploadTitle || uploadFile.name,
+        notes: uploadNotes,
+        appointment_id: uploadAppointmentId || null,
+        doctor_id: selectedAppt?.doctor_id || selectedAppt?.doctor?.id || null
+      });
+      setRecords((prev) => [created, ...prev]);
+      setShowUploadModal(false);
+      setUploadFile(null);
+      setUploadTitle('');
+      setUploadNotes('');
+      setUploadAppointmentId('');
+      setNotice('Medical document uploaded! Your doctor can now view it in your appointment details.');
+    } catch (err) {
+      setError(err.message || 'Could not upload document.');
+    } finally {
+      setUploadingDoc(false);
+    }
+  };
+
+  const deleteUploadedDoc = async (recId) => {
+    try {
+      await recordsApi.remove(recId);
+      setRecords((prev) => prev.filter((r) => r.id !== recId));
+      setNotice('Uploaded document removed.');
+    } catch (err) {
+      setError(err.message || 'Could not delete document.');
     }
   };
 
@@ -311,7 +355,6 @@ export default function PatientDashboard() {
           </h1>
         </div>
 
-        {/* Quick Patient Summary Pills */}
         <div className="flex flex-wrap gap-3">
           <div className="bg-panel border border-hairline rounded px-3.5 py-2 text-xs">
             <span className="text-muted block">Upcoming visits</span>
@@ -369,7 +412,6 @@ export default function PatientDashboard() {
         <>
           {activeTab === 'book' && (
             <div>
-              {/* Search and Specialization Filter Bar */}
               <div className="flex flex-col sm:flex-row gap-3 mb-6">
                 <input
                   type="text"
@@ -419,7 +461,6 @@ export default function PatientDashboard() {
                       viewerRole="patient"
                       onCancel={cancelAppointment}
                     />
-                    {/* Consultation Suite Actions: Chat, Video Call & Billing Receipt */}
                     {appt.status !== 'cancelled' && (
                       <div className="pb-4 flex flex-wrap items-center gap-2.5">
                         <button
@@ -440,6 +481,15 @@ export default function PatientDashboard() {
                         >
                           Billing Receipt
                         </button>
+                        <button
+                          onClick={() => {
+                            setUploadAppointmentId(appt.id);
+                            setShowUploadModal(true);
+                          }}
+                          className="text-xs font-medium text-accent hover:underline ml-1"
+                        >
+                          + Attach Lab Report
+                        </button>
                       </div>
                     )}
                   </div>
@@ -449,59 +499,102 @@ export default function PatientDashboard() {
           )}
 
           {activeTab === 'records' && (
-            <div className="panel px-6">
-              {records.length === 0 ? (
-                <p className="text-sm text-muted py-6">
-                  Your medical records and digital prescriptions will appear here after your visit.
+            <div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5">
+                <p className="text-sm text-muted">
+                  Your doctor prescriptions, clinical notes, and uploaded lab reports/scans.
                 </p>
-              ) : (
-                records.map((rec) => (
-                  <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-3">
-                    <RecordRow record={rec} viewerRole="patient" />
-                    {/* Vitals & E-Prescription Action Bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
-                      <div className="flex flex-wrap gap-2 text-xs text-muted">
-                        {rec.blood_pressure && (
-                          <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
-                            BP: {rec.blood_pressure}
-                          </span>
-                        )}
-                        {rec.heart_rate && (
-                          <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
-                            HR: {rec.heart_rate} bpm
-                          </span>
-                        )}
-                        {rec.temperature && (
-                          <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
-                            Temp: {rec.temperature} °F
-                          </span>
-                        )}
-                        {rec.weight_kg && (
-                          <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
-                            Weight: {rec.weight_kg} kg
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {rec.prescription && (
-                          <button
-                            onClick={() => createReminderFromPrescription(rec)}
-                            className="text-xs text-accent hover:underline font-medium"
-                          >
-                            + Set pill reminder
-                          </button>
-                        )}
-                        <button
-                          onClick={() => setSelectedPrescription(rec)}
-                          className="btn-secondary text-xs py-1 px-2.5"
-                        >
-                          View / Print E-Prescription
-                        </button>
+                <button
+                  onClick={() => {
+                    setUploadAppointmentId('');
+                    setShowUploadModal(true);
+                  }}
+                  className="btn-primary text-sm"
+                >
+                  + Upload Medical Document (PDF / Image)
+                </button>
+              </div>
+
+              <div className="panel px-6">
+                {records.length === 0 ? (
+                  <p className="text-sm text-muted py-6">
+                    No records yet. Upload past lab reports or prescriptions above so your doctor can review them before your visit.
+                  </p>
+                ) : (
+                  records.map((rec) => (
+                    <div key={rec.id} className="border-b border-hairline last:border-b-0 pb-3">
+                      <RecordRow record={rec} viewerRole="patient" />
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                          {rec.record_type === 'patient_upload' && (
+                            <span className="px-2 py-0.5 bg-status-pendingBg text-status-pending border border-hairline rounded font-medium">
+                              Patient Uploaded File
+                            </span>
+                          )}
+                          {rec.blood_pressure && (
+                            <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
+                              BP: {rec.blood_pressure}
+                            </span>
+                          )}
+                          {rec.heart_rate && (
+                            <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
+                              HR: {rec.heart_rate} bpm
+                            </span>
+                          )}
+                          {rec.temperature && (
+                            <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
+                              Temp: {rec.temperature} °F
+                            </span>
+                          )}
+                          {rec.weight_kg && (
+                            <span className="px-2 py-0.5 bg-paper border border-hairline rounded">
+                              Weight: {rec.weight_kg} kg
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2.5">
+                          {rec.file_url && (
+                            <a
+                              href={rec.file_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="btn-primary text-xs py-1 px-2.5"
+                            >
+                              View Uploaded File ({rec.file_name || 'Document'}) ↗
+                            </a>
+                          )}
+                          {rec.prescription && (
+                            <button
+                              onClick={() => createReminderFromPrescription(rec)}
+                              className="text-xs text-accent hover:underline font-medium"
+                            >
+                              + Set pill reminder
+                            </button>
+                          )}
+                          {rec.record_type !== 'patient_upload' && (
+                            <button
+                              onClick={() => setSelectedPrescription(rec)}
+                              className="btn-secondary text-xs py-1 px-2.5"
+                            >
+                              View / Print E-Prescription
+                            </button>
+                          )}
+                          {rec.record_type === 'patient_upload' && (
+                            <button
+                              onClick={() => deleteUploadedDoc(rec.id)}
+                              className="text-xs text-status-cancelled hover:underline"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
           )}
 
@@ -573,6 +666,74 @@ export default function PatientDashboard() {
           )}
         </>
       )}
+
+      {/* Upload Medical Document Modal */}
+      <Modal
+        open={showUploadModal}
+        onClose={() => setShowUploadModal(false)}
+        title="Upload Medical Document / Lab Report"
+      >
+        <form onSubmit={handleDocumentUpload}>
+          <div className="mb-4">
+            <label className="field-label" htmlFor="docTitle">Document title</label>
+            <input
+              id="docTitle"
+              required
+              placeholder="e.g. Complete Blood Count (CBC) Report, Chest X-Ray"
+              value={uploadTitle}
+              onChange={(e) => setUploadTitle(e.target.value)}
+              className="field-input"
+            />
+          </div>
+
+          <div className="mb-4">
+            <label className="field-label" htmlFor="docAppt">Link to appointment (optional)</label>
+            <select
+              id="docAppt"
+              value={uploadAppointmentId}
+              onChange={(e) => setUploadAppointmentId(e.target.value)}
+              className="field-input"
+            >
+              <option value="">General medical file (visible to your doctors)</option>
+              {appointments
+                .filter((a) => a.status !== 'cancelled')
+                .map((a) => (
+                  <option key={a.id} value={a.id}>
+                    Dr. {a.doctor?.full_name} · {new Date(a.appointment_date).toLocaleDateString('en-IN')} ({a.status})
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          <div className="mb-4">
+            <label className="field-label" htmlFor="docFile">Select PDF, JPG, or PNG file</label>
+            <input
+              id="docFile"
+              type="file"
+              required
+              accept=".pdf,image/*"
+              onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+              className="field-input py-2"
+            />
+          </div>
+
+          <div className="mb-6">
+            <label className="field-label" htmlFor="docNotes">Notes for the doctor (optional)</label>
+            <textarea
+              id="docNotes"
+              rows={2}
+              placeholder="e.g. Lab test done yesterday morning fasting"
+              value={uploadNotes}
+              onChange={(e) => setUploadNotes(e.target.value)}
+              className="field-input resize-none"
+            />
+          </div>
+
+          <button type="submit" disabled={uploadingDoc || !uploadFile} className="btn-primary w-full">
+            {uploadingDoc ? 'Uploading to secure vault…' : 'Upload & Share with Doctor'}
+          </button>
+        </form>
+      </Modal>
 
       {/* Enhanced Clinical Slot Booking Modal */}
       <Modal open={Boolean(bookingDoctor)} onClose={() => setBookingDoctor(null)} title="Book appointment">
@@ -808,7 +969,6 @@ export default function PatientDashboard() {
         </form>
       </Modal>
 
-      {/* Live Chat, Embedded Video Call & GST Billing Receipt Modal */}
       <ConsultationSuiteModal
         appointment={suiteModal.appointment}
         currentUser={profile}
